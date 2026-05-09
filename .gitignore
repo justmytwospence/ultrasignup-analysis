@@ -3,3 +3,10 @@
 .dolt/
 *.db
 .beads-credential-key
+
+# Nested subrepos (each has its own .git; commit inside them, not from root)
+scraper/
+analysis/
+
+# Local data and shared caches (managed independently of git)
+data/
