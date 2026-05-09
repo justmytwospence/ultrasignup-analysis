@@ -64,6 +64,7 @@ def _():
     from plotly.subplots import make_subplots
     from matplotlib import pyplot as plt
     from scipy.stats import pearsonr
+    import os
     import time
 
     # local functions
@@ -89,6 +90,7 @@ def _():
         notify_mcmc_error,
         notify_mcmc_start,
         np,
+        os,
         plot_posterior_diagnostics,
         plt,
         pm,

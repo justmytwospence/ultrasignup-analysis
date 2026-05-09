@@ -145,10 +145,10 @@ def _(candidates_df, go, pd, results):
     def plot_3d_kcore_space(candidates_df: pd.DataFrame, full_results: pd.DataFrame=None):
         """
         Create interactive 3D wireframe visualization of k-core parameter space.
-    
+
         Displays parameter space as a grid wireframe, connecting discrete (α, β) points
         from breadth-first search exploration.
-    
+
         Args:
             candidates_df: All k-core candidates with metrics
             full_results: Full dataset for calculating baseline density reference planes
