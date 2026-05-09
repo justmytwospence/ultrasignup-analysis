@@ -89,6 +89,7 @@ def _():
     import warnings
     warnings.filterwarnings('ignore')
 
+    import os
     import numpy as np
     import pandas as pd
     import pymc as pm
@@ -144,6 +145,7 @@ def _():
         linregress,
         load_results,
         np,
+        os,
         pd,
         plt,
         pm,

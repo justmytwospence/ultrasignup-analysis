@@ -128,7 +128,9 @@ def _(Path, os):
     draws = 2000
     target_accept = 0.9
 
-    model_dir = Path('../data/cache/model_1')
+    # Path is anchored to the notebook file so caches resolve regardless of
+    # marimo's CWD (which is the dir you ran 'uv run marimo' from, not notebooks/)
+    model_dir = Path(__file__).resolve().parent.parent / 'data' / 'cache' / 'model_1'
     os.makedirs(model_dir, exist_ok=True)
 
     subset_dir = f'{model_dir}/alpha{alpha}_beta{beta}'

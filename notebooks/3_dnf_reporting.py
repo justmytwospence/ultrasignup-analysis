@@ -207,7 +207,10 @@ def _(mo):
 
 @app.cell
 def _(az, os, pm, reporting_model):
-    model_m5_dnf_dir = '../data/cache/model_m5_dnf'
+    from pathlib import Path as _P
+    # Path is anchored to the notebook file so caches resolve regardless of
+    # marimo's CWD (which is the dir you ran 'uv run marimo' from, not notebooks/)
+    model_m5_dnf_dir = str(_P(__file__).resolve().parent.parent / 'data' / 'cache' / 'model_m5_dnf')
     reporting_cache_file = f'{model_m5_dnf_dir}/reporting_trace.nc'
 
     if os.path.exists(reporting_cache_file):

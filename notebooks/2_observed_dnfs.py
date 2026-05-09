@@ -335,7 +335,9 @@ def _(Path, os, results_1, subset_kcore_data):
     # (3, 220): 541 courses
     # (3, 233): 510 courses
     beta = 233
-    model_dir = Path('models/model_2')
+    # Path is anchored to the notebook file so caches resolve regardless of
+    # marimo's CWD (which is the dir you ran 'uv run marimo' from, not notebooks/)
+    model_dir = Path(__file__).resolve().parent / 'models' / 'model_2'
     os.makedirs(model_dir, exist_ok=True)
     subset_dir = f'{model_dir}/alpha{alpha}_beta{beta}'
     os.makedirs(subset_dir, exist_ok=True)
@@ -625,10 +627,10 @@ def _(
     def define_model(model_data, fixed_params=None):
         """
         Define the hierarchical Bayesian model for ultramarathon finish times and DNF rates.
-    
+
         This function builds the complete model structure with correlated course effects.
         Hyperparameters can either be estimated via priors (MCMC) or fixed at provided values (MAP).
-    
+
         Parameters
         ----------
         model_data : pd.DataFrame
@@ -643,7 +645,7 @@ def _(
             - 'dnf_distance_multiplier': scalar
             - 'chol': pre-computed Cholesky matrix (2x2)
             If any key is missing, that parameter will be estimated via priors.
-    
+
         Returns
         -------
         pm.Model
@@ -732,23 +734,23 @@ def _(np):
         """
         Transform log-space course effects to interpretable pace multipliers.
         Used for visualizations after sampling.
-    
+
         Args:
             trace: ArviZ InferenceData object with posterior samples
-        
+
         Returns:
             Array of course multipliers (shape: chains × draws × n_courses)
         """
         # Extract centered effects (in log-space for finish times)
         course_effects_centered = trace.posterior['course_effects_centered']
-    
+
         # For finish times: multiplier = exp(effect)
         # NOTE: Since we removed max(effect, 0) clipping from the model, 
         # multipliers can now be < 1.0 (courses that make you faster)
         # Use .sel() to select the finish_time dimension by name
         finish_effects = course_effects_centered.sel(course_effect_type='finish_time_total')
         course_multipliers_finish = np.exp(finish_effects.values)
-    
+
         return course_multipliers_finish
 
     return
@@ -1066,10 +1068,10 @@ def _(
     def plot_ppc(fig, distances, full_data, model_data, predictions, xlabel, ylabel, title_template, colors=None, xlim=None):
         """
         Generic PPC plotting function for 2x4 grid of distance facets.
-    
+
         Creates a 2x4 grid showing observed vs predicted distributions across distances.
         Works for both continuous (finish times) and binary (DNF rates) outcomes.
-    
+
         Parameters
         ----------
         fig : matplotlib.figure.Figure
@@ -1095,7 +1097,7 @@ def _(
         """
         if colors is None:
             colors = {'Observed (Full)': 'steelblue', 'Observed (Model)': 'green', 'Predictions': 'orange'}
-        _axes = _fig.subplots(2, 4)
+        _axes = fig.subplots(2, 4)
         _axes = _axes.flatten()
         for dist_idx, distance_tuple in enumerate(distances):
             dist_value, name, tolerance = distance_tuple
@@ -1144,10 +1146,10 @@ def _(
     def plot_finish_time_ppc(inference_data, results, model_data, distances, title):
         """  # Create bins
         Plot finish time predictive check by gender.
-    
+
         Creates separate figures for Male and Female showing 8 distance facets
         with observed and predicted finish time distributions.
-    
+
         Parameters  # Plot distributions
         ----------
         inference_data : arviz.InferenceData
@@ -1160,7 +1162,7 @@ def _(
             Distance specifications
         title : str
             Base title for figures
-    
+
         Returns
         -------  # Set limits
         dict
@@ -1235,10 +1237,10 @@ def _(
     def plot_dnf_rate_ppc(inference_data, results, model_data, distances, title, reference_distance=26.2):
         """
         Plot predictive check for DNF rates using the generic plot_ppc function.
-    
+
         Creates a single 2x4 grid showing overlaid histograms
         of observed and predicted DNF rate distributions.
-    
+
         Parameters
         ----------
         inference_data : arviz.InferenceData
@@ -1253,7 +1255,7 @@ def _(
             Title for the overall figure
         reference_distance : float
             Reference distance for log-space calculations (default: 26.2)
-    
+
         Returns
         -------
         matplotlib.figure.Figure
@@ -2314,7 +2316,7 @@ def _(map_trace, mcmc_courses_1, np, plt):
     def plot_course_forest(map_values, mcmc_medians, mcmc_q05, mcmc_q95, xlabel, title, reference_line=None, n_show=50, sort_ascending=True):
         """
         Create a forest plot showing top/bottom courses with MAP estimates and MCMC posteriors.
-    
+
         Parameters
         ----------
         map_values : np.ndarray
@@ -2335,7 +2337,7 @@ def _(map_trace, mcmc_courses_1, np, plt):
             Number of courses to show from top and bottom (default: 50)
         sort_ascending : bool
             If True, sort ascending (lowest first); if False, descending (highest first)
-    
+
         Returns
         -------
         fig, ax : matplotlib figure and axes objects
@@ -2584,11 +2586,11 @@ def _(REFERENCE_DISTANCE, np, pm, pt):
     def define_model_with_runners(model_data, fixed_params, runner_hyperparams):
         """
         Define hierarchical model with runner-level random effects for pace.
-    
+
         Extends define_model() by adding individual runner effects for:
         - Baseline pace (deviation from gender average)
         - Distance effect (deviation from gender average distance scaling)
-    
+
         Parameters
         ----------
         model_data : pd.DataFrame
@@ -2600,7 +2602,7 @@ def _(REFERENCE_DISTANCE, np, pm, pt):
             - 'sigma_runner_pace': SD of runner baseline pace effects
             - 'sigma_runner_distance': SD of runner distance effects
             - 'runner_correlation': Correlation between the two
-    
+
         Returns
         -------
         pm.Model
@@ -2960,7 +2962,7 @@ def _(np, plt):
     def plot_runner_forest(runner_values, runner_ids, runner_genders, runner_races, xlabel, title, reference_line=0.0, n_show=50, sort_ascending=True, min_races=1, runner_names=None):
         """
         Create forest plot showing top/bottom runners.
-    
+
         Parameters
         ----------
         runner_values : np.ndarray
@@ -2985,7 +2987,7 @@ def _(np, plt):
             Minimum races to include
         runner_names : np.ndarray, optional
             Runner names (if None, uses runner_ids)
-    
+
         Returns
         -------
         fig, ax
