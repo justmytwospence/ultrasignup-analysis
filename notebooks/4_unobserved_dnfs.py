@@ -136,6 +136,7 @@ def _():
     print(f"ArviZ version: {az.__version__}")
     return (
         Patch,
+        Path,
         az,
         calculate_difficulty_dnf_coupling,
         calculate_dnf_priors,
@@ -390,10 +391,11 @@ def _(mo):
 
 @app.cell
 def _(results, subset_kcore_data):
-    # K-core parameters chosen from kcore_optimization.ipynb Pareto frontier
-    # TODO: Update these values based on your Pareto frontier analysis
-    alpha = 5  # Minimum courses per k-core runner
-    beta = 25  # Minimum runners per k-core course
+    # K-core parameters. Default = (3, 840) — the dev k-core selected in 0_kcore.
+    # Iterate on (3, 840) for fast feedback; switch to a looser config for final inference.
+    # Looser candidate configs evaluated in 0_kcore: (5, 25), (3, 233), (3, 423), etc.
+    alpha = 3  # Minimum courses per k-core runner
+    beta = 840  # Minimum runners per k-core course
     results_1 = subset_kcore_data(results, alpha=alpha, beta=beta)
     # Apply k-core flagging with course-completion closure
     model_data = results_1[results_1['in_kcore'] | results_1['in_closure']]
@@ -409,7 +411,7 @@ def _(results, subset_kcore_data):
     print(f"\nParticipants: {model_data['participant_id'].nunique():,}")
     print(f"Courses: {model_data.groupby(['name', 'distance_miles']).ngroups:,}")
     print(f"Races: {model_data['event_distance_id'].nunique():,}")
-    return alpha, model_data, results_1
+    return alpha, beta, model_data, results_1
 
 
 @app.cell(hide_code=True)
@@ -1278,27 +1280,40 @@ def _(mo):
 
 
 @app.cell
-def _(alpha, az, beta_1, model_data, os):
-    # Sampling parameters for Model 5
-    tune_m5 = 1000
-    draws_m5 = 3000
+def _(Path, alpha, az, beta, model_data, model_m5, os, pm):
+    # Sampling parameters for Model 5. Dev iteration: small budget for fast feedback.
+    tune_m5 = 500
+    draws_m5 = 500
     target_accept_m5 = 0.95
     thin_m5 = 2  # Keep every 2nd sample → reduces memory by 50%
-    model_m5_dir = f'../data/cache/model_m5/alpha{alpha}_beta{beta_1}'
-    # Set up caching directory and file (using alpha/beta parameters)
+    # Anchor cache to the notebook file so it resolves regardless of marimo CWD.
+    model_m5_dir = Path(__file__).resolve().parent.parent / 'data' / 'cache' / 'model_m5' / f'alpha{alpha}_beta{beta}'
     os.makedirs(model_m5_dir, exist_ok=True)
-    cache_file_m5 = f'{model_m5_dir}/tune{tune_m5}_draws{draws_m5}_thin{thin_m5}_accept{target_accept_m5}.nc'
+    cache_file_m5 = str(model_m5_dir / f'tune{tune_m5}_draws{draws_m5}_thin{thin_m5}_accept{target_accept_m5}.nc')
+    n_participants = model_data['participant_id'].nunique()
+    n_courses_m5_1 = model_data.groupby(['name', 'distance_miles']).ngroups
+    n_races_m5_1 = model_data['event_distance_id'].nunique()
     if os.path.exists(cache_file_m5):
         print(f'✅ Loading cached trace from {cache_file_m5}')
-    # Check for cached trace
         trace_m5 = az.from_netcdf(cache_file_m5)
         print(f"   Loaded: {trace_m5.posterior.dims['draw']} draws × {trace_m5.posterior.dims['chain']} chains")
     else:
         print(f'🚀 Running MCMC sampling for Model 5b...')
         print(f'  Configuration: tune={tune_m5}, draws={draws_m5}, thin={thin_m5}, target_accept={target_accept_m5}')
-        n_participants = model_data['participant_id'].nunique()
-        n_courses_m5_1 = model_data.groupby(['name', 'distance_miles']).ngroups
-        n_races_m5_1 = model_data['event_distance_id'].nunique()  # Get actual data dimensions for logging
+        print(f'  Data: participants={n_participants:,}, courses={n_courses_m5_1:,}, races={n_races_m5_1:,}')
+        with model_m5:
+            trace_m5 = pm.sample(
+                draws=draws_m5,
+                tune=tune_m5,
+                chains=4,
+                cores=4,
+                target_accept=target_accept_m5,
+                random_seed=42,
+                return_inferencedata=True,
+                idata_kwargs={'log_likelihood': False},
+            )
+        print(f'💾 Saving trace to {cache_file_m5}')
+        trace_m5.to_netcdf(cache_file_m5)
     return (
         draws_m5,
         model_m5_dir,

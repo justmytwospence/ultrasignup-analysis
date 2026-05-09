@@ -327,14 +327,16 @@ def _(mo):
 
 @app.cell
 def _(Path, os, results_1, subset_kcore_data):
-    # K-core subsetting
-    alpha = 3
-    # (3, 840): 11 courses
+    # K-core parameters. Default = (3, 423) for dev iteration.
+    # NOTE: counts below assume nb 2's filter chain (no filter_races_with_dnfs);
+    # 0_kcore's (3, 840) numbers don't apply here directly.
+    # (3, 840): 11 courses    (too few for LKJ correlation)
     # (3, 629): 93 courses
-    # (3, 423): 210 courses
+    # (3, 423): 210 courses   ← dev default (enough courses for LKJ to learn)
+    # (3, 233): 510 courses   ← previous default
     # (3, 220): 541 courses
-    # (3, 233): 510 courses
-    beta = 233
+    alpha = 3
+    beta = 423
     # Path is anchored to the notebook file so caches resolve regardless of
     # marimo's CWD (which is the dir you ran 'uv run marimo' from, not notebooks/)
     model_dir = Path(__file__).resolve().parent / 'models' / 'model_2'
@@ -1462,8 +1464,9 @@ def _(
     subset_dir,
     time,
 ):
+    # Dev iteration sampling budget. For final inference bump to TUNE=2000, DRAWS=2000.
     TUNE = 500
-    DRAWS = 1000
+    DRAWS = 500
     TARGET_ACCEPT = 0.95
     cache_file = f'{subset_dir}/tune{TUNE}_draws{DRAWS}_accept{TARGET_ACCEPT}.nc'
     hyperparam_vars = ['pace_marathon', 'pace_distance_effect', 'finish_time_noise', 'dnf_rate_marathon', 'dnf_distance_multiplier']

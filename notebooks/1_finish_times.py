@@ -119,13 +119,13 @@ def _(Path, os):
 
     reference_distance = 26.2  # Marathon
 
-    # K-core parameters chosen from kcore_optimization.ipynb Pareto frontier
-    # TODO: Update these values based on your Pareto frontier analysis
-    alpha = 5  # Minimum courses per k-core runner
-    beta = 25  # Minimum runners per k-core course
+    # K-core parameters. Default = (3, 840) — the dev k-core selected in 0_kcore.
+    # Iterate on (3, 840) for fast feedback; switch to a looser config for final inference.
+    alpha = 3  # Minimum courses per k-core runner
+    beta = 840  # Minimum runners per k-core course
 
-    tune = 1000
-    draws = 2000
+    tune = 500
+    draws = 500
     target_accept = 0.9
 
     # Path is anchored to the notebook file so caches resolve regardless of
