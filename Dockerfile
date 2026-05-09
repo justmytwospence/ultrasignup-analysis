@@ -89,5 +89,11 @@ RUN rm -rf /var/lib/apt/lists/* && apt-get update && apt-get install -y \
 
 WORKDIR /workspace/analysis
 
+# Copy and set up entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 # Expose ports (inherited by derived images)
-EXPOSE 22
+EXPOSE 22 8888
+
+ENTRYPOINT ["/entrypoint.sh"]

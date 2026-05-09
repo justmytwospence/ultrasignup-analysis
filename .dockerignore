@@ -1,6 +1,5 @@
 # Exclude large model artifacts and cache files from Docker build context
-models/
-cache/
+data/
 
 # Python cache
 __pycache__/
