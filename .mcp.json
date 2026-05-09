@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "duckdb": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-duckdb",
+        "--db-path",
+        "/Users/spencerboucher/Projects/UltraSignup/analysis/data/ultrasignup.duckdb",
+        "--readonly"
+      ]
+    }
+  }
+}
