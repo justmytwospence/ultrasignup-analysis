@@ -309,7 +309,7 @@ def _(
 @app.cell
 def _(model, pm):
     with model:
-        prior_pred = pm.sample_prior_predictive(samples=10000, random_seed=37)
+        prior_pred = pm.sample_prior_predictive(samples=500, random_seed=37)
     return (prior_pred,)
 
 
@@ -543,7 +543,6 @@ def _(mo):
 def _(
     az,
     draws,
-    max_entities,
     model,
     n_observations,
     notify_mcmc_complete,
@@ -566,18 +565,17 @@ def _(
         print(az.summary(trace, var_names=hyperparam_vars))
     else:
         print(f'Configuration: tune={tune}, draws={draws}, target_accept={target_accept}')
-        print(f'K-core subset: max_entities={max_entities}')
-    # check if cached trace exists
+        print(f'K-core subset: n_observations={n_observations}')
         notify_mcmc_start(model_name='Model 1', n_results=n_observations, draws=draws, target_accept=target_accept)
         _start_time = time.time()
         try:
             with model:
-                trace = pm.sample(draws=draws, tune=tune, chains=4, cores=4, target_accept=target_accept, random_seed=42, return_inferencedata=True, idata_kwargs={'log_likelihood': False}, init='jitter+adapt_diag', progressbar=True, compute_convergence_checks=False)
+                trace = pm.sample(draws=draws, tune=tune, chains=4, cores=4, target_accept=target_accept, random_seed=42, return_inferencedata=True, idata_kwargs={'log_likelihood': False}, nuts_sampler='nutpie', progressbar=True, compute_convergence_checks=False)
             _elapsed_time = time.time() - _start_time
             print(az.summary(trace, var_names=hyperparam_vars))
             print(f'Saving trace to {cache_file}...')
             trace.to_netcdf(cache_file)
-            effective_draws = trace.posterior.dims['draw']  # Send start notification
+            effective_draws = trace.posterior.dims['draw']
             divergences = trace.sample_stats.diverging.sum().values
             notify_mcmc_complete(model_name='Model 1', elapsed_time=_elapsed_time, n_results=n_observations, effective_draws=effective_draws, divergences=divergences, n_chains=4)
             print(f'MCMC completed in {_elapsed_time / 60:.2f} minutes')
@@ -585,7 +583,7 @@ def _(
             _elapsed_time = time.time() - _start_time
             notify_mcmc_error(model_name='Model 1', error_msg=str(e), elapsed_time=_elapsed_time)
             print(f'❌ MCMC failed after {_elapsed_time / 60:.2f} minutes')
-            raise  # Print summary before saving  # Save trace to cache  # Compute diagnostics for notification  # Send success notification  # Send error notification
+            raise
     return hyperparam_vars, trace
 
 
