@@ -194,6 +194,12 @@ def subset_kcore_data(
     # Map course_id from finishers to full results DataFrame
     # CRITICAL: Use merge to preserve exact same course_id values from graph
     course_id_map = finishers[['name', 'distance_miles', 'course_id']].drop_duplicates()
+    # Caller may already have a 'course_id' column with a different convention
+    # (e.g., notebooks/4_unobserved_dnfs uses a string id "name||distance"). Drop
+    # it before merging so we get a clean integer course_id rather than the
+    # auto-suffixed course_id_x/course_id_y pandas would otherwise produce.
+    if 'course_id' in results.columns:
+        results = results.drop(columns=['course_id'])
     results = results.merge(course_id_map, on=['name', 'distance_miles'], how='left')
     
     # Course-completion closure: ALL participants at k-core courses
