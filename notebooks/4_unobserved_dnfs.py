@@ -774,7 +774,7 @@ def _(
     print(f'   Courses with zero DNFs: {n_courses_zero_dnf:,} → psi inferred via Bernoulli(p=(1-p_dnf)^n)')
     print(f'   Distance-specific DNF rates used for zero-DNF course likelihood')
     print(f'   Total parameters: {10} hyperparameters + {n_courses_m5:,} courses + {n_races_m5:,} races')
-    return beta_1, model_m5, sigma_obs
+    return model_m5, sigma_obs
 
 
 @app.cell
@@ -1311,6 +1311,7 @@ def _(Path, alpha, az, beta, model_data, model_m5, os, pm):
                 random_seed=42,
                 return_inferencedata=True,
                 idata_kwargs={'log_likelihood': False},
+                nuts_sampler='nutpie',
             )
         print(f'💾 Saving trace to {cache_file_m5}')
         trace_m5.to_netcdf(cache_file_m5)

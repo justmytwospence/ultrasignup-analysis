@@ -174,7 +174,7 @@ def _():
 
     if IS_MACOS:
         # macOS: Use blackjax for better CPU compatibility
-        NUTS_SAMPLER = 'blackjax'
+        NUTS_SAMPLER = 'nutpie'
         N_CHAINS = 4
         N_CORES = 4
         PLATFORM_CONFIG = f"macOS (CPU + blackjax, {JAX_DEVICE_COUNT} devices)"
