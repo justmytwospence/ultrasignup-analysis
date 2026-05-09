@@ -48,6 +48,7 @@ def _(mo):
 @app.cell
 def _():
     # Standard library
+    import os
     import time
     import warnings
     from datetime import datetime
@@ -80,7 +81,8 @@ def _():
         calculate_dnf_priors
     )
 
-    return az, betaln, load_results, np, pd, plt, pm, process_results
+
+    return az, betaln, load_results, np, os, pd, plt, pm, process_results
 
 
 @app.cell
@@ -220,15 +222,16 @@ def _(az, os, pm, reporting_model):
                 return_inferencedata=True,
                 random_seed=42
             )
-    
+
         # Create directory if it doesn't exist
         os.makedirs(model_m5_dnf_dir, exist_ok=True)
-    
+
         # Save trace
         reporting_trace.to_netcdf(reporting_cache_file)
         print(f"Saved trace to {reporting_cache_file}")
 
     print(az.summary(reporting_trace, var_names=['mu_logit_dnf', 'beta_distance_dnf', 'kappa']))
+
     return (reporting_trace,)
 
 
