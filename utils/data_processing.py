@@ -21,10 +21,8 @@ def load_results(db_path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
     ----------
     db_path : str or Path, optional
         Path to the DuckDB database file.
-        If None, tries multiple paths:
-        1. /workspace/data/ultrasignup.duckdb (Docker)
-        2. ../data/ultrasignup.duckdb (relative to utils/)
-        3. ../../data/ultrasignup.duckdb (relative to notebook cwd)
+        If None, looks for data/ultrasignup.duckdb relative to the repo root.
+        Works both locally and in Docker when data is mounted at the same relative path.
         
     Returns
     -------
@@ -37,22 +35,9 @@ def load_results(db_path: Optional[Union[str, Path]] = None) -> pd.DataFrame:
     resolved_path: Path
     
     if db_path is None:
-        # Try multiple possible paths
-        possible_paths = [
-            Path("/workspace/data/ultrasignup.duckdb"),  # Docker container
-            Path(__file__).parent.parent.parent / "data" / "ultrasignup.duckdb",  # Local (from utils/)
-            Path.cwd().parent / "data" / "ultrasignup.duckdb",  # From notebook cwd
-        ]
-        
-        for path in possible_paths:
-            if path.exists():
-                resolved_path = path
-                break
-        else:
-            raise FileNotFoundError(
-                f"Database file not found. Tried paths:\n" +
-                "\n".join(f"  - {p}" for p in possible_paths)
-            )
+        # Find repo root (where utils/ lives) and look for data/ultrasignup.duckdb
+        repo_root = Path(__file__).parent.parent
+        resolved_path = repo_root / "data" / "ultrasignup.duckdb"
     else:
         resolved_path = Path(db_path)
     
