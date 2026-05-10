@@ -280,7 +280,7 @@ def evaluate_all_kcore_candidates(
     ... )
     """
     # Setup cache directory and key
-    cache_dir = Path(__file__).parent.parent.parent / "data" / "cache" / "kcore"
+    cache_dir = Path(__file__).parent.parent / "data" / "cache" / "kcore"
     cache_dir.mkdir(parents=True, exist_ok=True)
     
     # Handle cache clearing

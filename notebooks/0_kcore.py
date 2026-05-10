@@ -109,12 +109,12 @@ def _(evaluate_all_kcore_candidates, results):
 
     candidates_df = evaluate_all_kcore_candidates(
         results=results,
-        max_entities=None,  # explore full parameter space
+        max_entities=None,  # cached candidates_df from prior full sweep
         min_alpha=2,  # courses per runner
         min_beta=30,  # runners per course
-        beta_step=2,  
+        beta_step=2,
         verbose=True,
-        use_cache=True  
+        use_cache=True
     )
     return (candidates_df,)
 
