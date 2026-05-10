@@ -412,7 +412,7 @@ def _(alpha, beta, model_data, np, plt, results_2):
     _ax_course.set_xlim(0, 100)
     _fig.suptitle(f'K-Core and Closure Completeness Distributions (α={alpha}, β={beta})', fontsize=12, fontweight='bold', y=0.995)
     plt.tight_layout()
-    plt.show()
+    plt.gcf()
     return (kcore_data,)
 
 
@@ -668,6 +668,7 @@ def _(
         log_distance_ratio_finishers = np.log(distances_finishers / REFERENCE_DISTANCE)
         distances_results = model_data['distance_miles'].values  # Prepare finisher data
         course_indices_results = model_data['name'].map(course_to_idx).values
+        gender_indices_results = model_data['gender'].map(gender_to_idx).values
         did_finish = (~model_data['finished']).values.astype(int)
         unique_course_distances = np.array([distances_finishers[course_indices_finishers == _i].mean() if (course_indices_finishers == _i).any() else distances_results[course_indices_results == _i].mean() if (course_indices_results == _i).any() else REFERENCE_DISTANCE for _i in range(len(unique_courses))])
         unique_log_distance_ratios = np.log(unique_course_distances / REFERENCE_DISTANCE)
@@ -688,17 +689,18 @@ def _(
             else:
                 finish_time_noise = pm.HalfNormal('finish_time_noise', sigma=sigma_finish_time_noise, dims='gender')
             if is_fixed_mode and 'dnf_rate_marathon' in fixed_params:
-                dnf_rate_marathon = pm.Data('dnf_rate_marathon', fixed_params['dnf_rate_marathon'])
+                dnf_rate_marathon = pm.Data('dnf_rate_marathon', fixed_params['dnf_rate_marathon'], dims='gender')
             else:
-                dnf_rate_marathon = pm.Normal('dnf_rate_marathon', mu=mu_logit_dnf, sigma=sigma_dnf_rate_marathon)
+                dnf_rate_marathon = pm.Normal('dnf_rate_marathon', mu=mu_logit_dnf, sigma=sigma_dnf_rate_marathon, dims='gender')
             if is_fixed_mode and 'dnf_distance_multiplier' in fixed_params:
                 dnf_distance_multiplier = pm.Data('dnf_distance_multiplier', fixed_params['dnf_distance_multiplier'])
             else:  # Define coordinates for PyMC
                 dnf_distance_multiplier = pm.Normal('dnf_distance_multiplier', mu=beta_dist_dnf, sigma=sigma_dnf_distance_multiplier)
             pace_marathon_avg = (pace_marathon[0] + pace_marathon[1]) / 2
             pace_distance_effect_avg = (pace_distance_effect[0] + pace_distance_effect[1]) / 2
+            dnf_rate_marathon_avg = (dnf_rate_marathon[0] + dnf_rate_marathon[1]) / 2
             course_distance_finish_baseline = pace_marathon_avg + pace_distance_effect_avg * unique_log_distance_ratios
-            course_distance_dnf_baseline = dnf_rate_marathon + dnf_distance_multiplier * unique_log_distance_ratios
+            course_distance_dnf_baseline = dnf_rate_marathon_avg + dnf_distance_multiplier * unique_log_distance_ratios
             if is_fixed_mode and 'chol' in fixed_params:
                 chol = pt.as_tensor_variable(fixed_params['chol'])
             else:
@@ -711,7 +713,8 @@ def _(
             expected_log_pace = course_total_finish_effect[course_indices_finishers] + gender_deviation  # --- HYPERPARAMETERS ---
             expected_log_time = expected_log_pace + log_distances_finishers  # Either estimated via priors or fixed at provided values
             finish_likelihood = pm.LogNormal('finisher_times', mu=expected_log_time, sigma=finish_time_noise[gender_indices_finishers], observed=observed_times_finishers, dims='finishers')
-            logit_p_dnf = course_total_dnf_effect[course_indices_results]
+            gender_dnf_deviation = dnf_rate_marathon[gender_indices_results] - dnf_rate_marathon_avg
+            logit_p_dnf = course_total_dnf_effect[course_indices_results] + gender_dnf_deviation
             pm.Bernoulli('did_finish_obs', p=pm.math.invlogit(logit_p_dnf), observed=did_finish, dims='obs_results')
         return model  # Finish time noise - always fixed at sigma_finish_time_noise constant  # --- DISTANCE BASELINES ---  # --- CORRELATED COURSE EFFECTS ---  # Use pre-computed Cholesky matrix  # Estimate correlation structure via LKJCholeskyCov  # Non-centered parameterization with standard normal raw effects  # Transform to correlated effects with proper scaling  # Add distance baselines to get total effects (in log-space)  # --- LIKELIHOOD ---  # FINISH TIME MODEL (LogNormal)  # Compute gender deviation from population average (in log-space)  # OPTIMIZATION: Stay in log-space throughout  # LogNormal likelihood  # DNF MODEL (additive effects on logit scale)  # logit_p_dnf represents logit(P(DNF))  # CHANGED: Removed negation - now directly modeling P(DNF)  # Bernoulli likelihood: did_finish is now coded as 1=DNF, 0=finished
 
@@ -719,14 +722,16 @@ def _(
 
 
 @app.cell
-def _(define_model, model_data, model_dir, pm):
+def _(define_model, mo, model_data, model_dir, pm):
     # Build MCMC model with all hyperparameters estimated via priors
     model = define_model(model_data, fixed_params=None)
     _graph = pm.model_to_graphviz(model)
     # Display model structure
     _graph.graph_attr['size'] = '10,12'
     _graph.render(model_dir / 'model_graph', format='png', cleanup=True)
-    _graph
+    mo.Html(
+        f'<div style="max-width:100%; overflow-x:auto">{_graph.pipe(format="svg").decode()}</div>'
+    )
     return (model,)
 
 
@@ -938,7 +943,7 @@ def _(
     # 7. course_effect_sds - DNF (scalar) - as odds ratio
     # 8. course_correlation (scalar) - THE KEY PARAMETER for selection bias quantification
     # No empirical prior for correlation (learned from LKJ)
-    plt.show()
+    plt.gcf()
     return
 
 
@@ -1048,7 +1053,7 @@ def _(np, plt, prior_pred, sns):
     plt.tight_layout()
     # Use percentile-based limits to match the distribution plots
     # Add correlation coefficient
-    plt.show()
+    plt.gcf()
     return
 
 
@@ -1062,6 +1067,7 @@ def _(mo):
 
 @app.cell
 def _(
+    mo,
     model_data_finishers,
     np,
     plt,
@@ -1221,9 +1227,8 @@ def _(
             plt.tight_layout(rect=[0, 0, 1, 0.92])
             figures[gender_label] = _fig
         return figures
-    figures = plot_finish_time_ppc(inference_data=prior_pred, results=results_2, model_data=model_data_finishers, distances=standard_distances, title='Prior Predictive Check: Finish Times by Gender and Distance')
-    for gender_label, _fig in figures.items():
-        plt.show()
+    _figures = plot_finish_time_ppc(inference_data=prior_pred, results=results_2, model_data=model_data_finishers, distances=standard_distances, title='Prior Predictive Check: Finish Times by Gender and Distance')
+    mo.vstack(list(_figures.values()))
     return plot_finish_time_ppc, plot_ppc
 
 
@@ -1269,14 +1274,16 @@ def _(
         unique_course_distances = np.array([model_data[model_data['name'] == course]['distance_miles'].mean() for course in unique_courses])
         unique_log_distance_ratios = np.log(unique_course_distances / reference_distance)
         if hasattr(inference_data, 'posterior'):
-            dnf_rate_marathon = inference_data.posterior['dnf_rate_marathon'].values.flatten()
+            # dnf_rate_marathon is gender-dim (chains, draws, n_genders) — average over gender
+            # for the population-level baseline plotted here.
+            dnf_rate_marathon = inference_data.posterior['dnf_rate_marathon'].mean(dim='gender').values.flatten()
             dnf_distance_multiplier = inference_data.posterior['dnf_distance_multiplier'].values.flatten()
             course_effects_centered = inference_data.posterior['course_effects_centered'].values
             course_effects_centered_flat = course_effects_centered.reshape(-1, course_effects_centered.shape[-2], course_effects_centered.shape[-1])
         else:
-            dnf_rate_marathon = inference_data.prior['dnf_rate_marathon'].values.flatten()
+            dnf_rate_marathon = inference_data.prior['dnf_rate_marathon'].mean(dim='gender').values.flatten()
             dnf_distance_multiplier = inference_data.prior['dnf_distance_multiplier'].values.flatten()
-            dnf_rate_marathon_full = inference_data.prior['dnf_rate_marathon'].values
+            dnf_rate_marathon_full = inference_data.prior['dnf_rate_marathon'].mean(dim='gender').values
             dnf_distance_multiplier_full = inference_data.prior['dnf_distance_multiplier'].values
             course_effects_centered = inference_data.prior['course_effects_centered'].values
             course_distance_dnf_baseline = dnf_rate_marathon_full[:, :, np.newaxis] + dnf_distance_multiplier_full[:, :, np.newaxis] * unique_log_distance_ratios
@@ -1355,7 +1362,7 @@ def _(
         plt.tight_layout(rect=[0, 0, 1, 0.92])
         return _fig
     _fig = plot_dnf_rate_ppc(inference_data=prior_pred, results=results_2, model_data=kcore_data, distances=standard_distances, title='Prior Predictive Check: DNF Rates by Distance', reference_distance=reference_distance)
-    plt.show()
+    _fig
     return (plot_dnf_rate_ppc,)
 
 
@@ -1426,7 +1433,7 @@ def _(np, plt, prior_pred):
     # Ensure both arrays have the same number of samples
     plt.tight_layout()
     # Create 2 subplots: one for finish time effects, one for DNF effects
-    plt.show()  # Add reference line
+    plt.gcf()  # Add reference line
     return
 
 
@@ -1455,6 +1462,7 @@ def _(
     beta,
     build_mcmc_summary_string,
     jax,
+    mo,
     model,
     model_data,
     n_courses,
@@ -1476,9 +1484,18 @@ def _(
         print(f'Loading cached trace from {cache_file}')
         trace = az.from_netcdf(cache_file)
     else:
+        import datetime
+        _started_at = datetime.datetime.now()
+        # Beacon — renders immediately so the user can locate this cell from any view.
+        mo.output.replace(mo.callout(
+            f"⏳ Sampling Model 3 (Observed DNFs) — started {_started_at:%H:%M:%S}, "
+            f"sampler={NUTS_SAMPLER}, k-core=({alpha},{beta}), tune={TUNE}, draws={DRAWS}, "
+            f"obs={len(model_data):,}, courses={n_courses:,}",
+            kind="info",
+        ))
         start_message = f"Configuration: tune={TUNE}, draws={DRAWS}, target_accept={TARGET_ACCEPT}\nPlatform: {PLATFORM_CONFIG}\nK-core subset: alpha={alpha}, beta={beta}\nData: total results={len(model_data):,}, courses={n_courses:,}, runners={model_data['participant_id'].nunique():,}"
         print(start_message)
-        notify_mcmc_start(model_name='Model 2 (Observed DNFs)', message=start_message)
+        notify_mcmc_start(model_name='Model 3 (Observed DNFs)', message=start_message)
         _start_time = time.time()
         try:
             with model:
@@ -1547,6 +1564,7 @@ def _(
     TUNE,
     az,
     hyperparam_vars,
+    mo,
     np,
     plt,
     subset_dir,
@@ -1554,8 +1572,8 @@ def _(
 ):
     # traceplot for hyperparameters
     _axes = az.plot_trace(trace, var_names=hyperparam_vars, compact=True, figsize=(12, 10))
-    _fig = _axes.ravel()[0].figure
-    _fig.patch.set_facecolor('white')
+    _hp_trace_fig = _axes.ravel()[0].figure
+    _hp_trace_fig.patch.set_facecolor('white')
     for _ax in _axes.ravel():
         _ax.set_facecolor('white')
         if _ax.get_xlabel() or _ax.get_ylabel():  # Only add grid to plots with axes
@@ -1566,20 +1584,19 @@ def _(
     # save traceplot
     plt.savefig(traceplot_file, dpi=300, bbox_inches='tight')
     print(f'Saved traceplot to {traceplot_file}')
-    plt.show()
     course_coords = list(trace.posterior.coords['course'].values)
     sample_course_ids = np.random.choice(course_coords, size=min(20, len(course_coords)), replace=False)
     _axes = az.plot_trace(trace, var_names=['course_effects_centered'], coords={'course': sample_course_ids}, compact=True, figsize=(12, 20))
     # traceplot for sample of course difficulty parameters
-    _fig = _axes.ravel()[0].figure
-    _fig.patch.set_facecolor('white')
+    _course_trace_fig = _axes.ravel()[0].figure
+    _course_trace_fig.patch.set_facecolor('white')
     for _ax in _axes.ravel():
         _ax.set_facecolor('white')
         if _ax.get_xlabel() or _ax.get_ylabel():
             _ax.grid(True, color='lightgray', alpha=0.7, linewidth=0.5)  # Use centered effects (finish + DNF)
     plt.suptitle('MCMC Traces: Sample Course Effects (Centered)', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plt.show()  # Only add grid to plots with axes
+    mo.vstack([_hp_trace_fig, _course_trace_fig])
     return
 
 
@@ -1629,15 +1646,15 @@ def _(model, pm, trace):
 
 @app.cell
 def _(
+    mo,
     model_data_finishers,
     plot_finish_time_ppc,
-    plt,
     results_2,
     standard_distances,
     trace,
 ):
-    _fig = plot_finish_time_ppc(inference_data=trace, results=results_2, model_data=model_data_finishers, distances=standard_distances, title='Posterior Predictive Check: Finish Times by Gender and Distance')
-    plt.show()
+    _figures = plot_finish_time_ppc(inference_data=trace, results=results_2, model_data=model_data_finishers, distances=standard_distances, title='Posterior Predictive Check: Finish Times by Gender and Distance')
+    mo.vstack(list(_figures.values()))
     return
 
 
@@ -1646,13 +1663,12 @@ def _(
     REFERENCE_DISTANCE,
     kcore_data,
     plot_dnf_rate_ppc,
-    plt,
     results_2,
     standard_distances,
     trace,
 ):
     _fig = plot_dnf_rate_ppc(inference_data=trace, results=results_2, model_data=kcore_data, distances=standard_distances, title='Posterior Predictive Check: DNF Rates by Distance', reference_distance=REFERENCE_DISTANCE)
-    plt.show()
+    _fig
     return
 
 
@@ -1721,7 +1737,7 @@ def _(np, plt, reference_distance, standard_distances, trace, unique_genders):
     _ax.set_xlim(5, 100)
     plt.tight_layout()
     # Add distance labels at the top
-    plt.show()  # Add markers and annotations for ALL standard distances  # Find closest index in distances array  # Plot marker  # Label with pace value (offset vertically by gender to avoid overlap)  # Fixed offset from top
+    plt.gcf()  # Add markers and annotations for ALL standard distances  # Find closest index in distances array  # Plot marker  # Label with pace value (offset vertically by gender to avoid overlap)  # Fixed offset from top
     return
 
 
@@ -1729,7 +1745,9 @@ def _(np, plt, reference_distance, standard_distances, trace, unique_genders):
 def _(np, plt, reference_distance, standard_distances, trace):
     # Plot learned DNF rate as a function of course distance
     # This shows the distance baseline (without course-specific effects)
-    dnf_rate_marathon_samples = trace.posterior['dnf_rate_marathon'].values.flatten()
+    # Average over gender for the population-level curve. Per-gender curves could be
+    # plotted separately if needed.
+    dnf_rate_marathon_samples = trace.posterior['dnf_rate_marathon'].mean(dim='gender').values.flatten()
     # Get the learned distance baseline DNF effects from the posterior
     # This is dnf_rate_marathon + dnf_distance_multiplier * log(distance / marathon_distance)
     dnf_distance_multiplier_samples = trace.posterior['dnf_distance_multiplier'].values.flatten()
@@ -1770,7 +1788,7 @@ def _(np, plt, reference_distance, standard_distances, trace):
     _ax.set_xlim(10, 100)
     _ax.set_ylim(0, max(dnf_prob_q95 * 100) + 5)
     plt.tight_layout()  # Calculate DNF rate at this distance
-    plt.show()
+    plt.gcf()
     return
 
 
@@ -1818,7 +1836,7 @@ def _(az, np, plt, trace):
     # This is because logit_p_dnf is now correctly negated in the model
     _ax.text(0.98, 0.97, interp, transform=_ax.transAxes, fontsize=11, verticalalignment='top', horizontalalignment='right', bbox=dict(boxstyle='round', facecolor=box_color, alpha=0.8))
     plt.tight_layout()
-    plt.show()
+    plt.gcf()
     return
 
 
@@ -1844,9 +1862,10 @@ def _(np, trace, unique_log_distance_ratios):
     course_effects_centered_post = trace.posterior['course_effects_centered']  # Shape: (chains, draws)
     pace_marathon_avg_post = pace_marathon_post.mean(dim='gender')  # Shape: (chains, draws, n_courses, 2)
     pace_distance_effect_avg_post = pace_distance_effect_post.mean(dim='gender')
+    dnf_rate_marathon_avg_post = dnf_rate_marathon_post.mean(dim='gender')
     # Compute population averages (these were intermediate variables in model, not saved to trace)
     course_distance_finish_baseline_post = pace_marathon_avg_post.values[..., np.newaxis] + pace_distance_effect_avg_post.values[..., np.newaxis] * unique_log_distance_ratios  # Shape: (chains, draws)
-    course_distance_dnf_baseline_post = dnf_rate_marathon_post.values[..., np.newaxis] + dnf_distance_multiplier_post.values[..., np.newaxis] * unique_log_distance_ratios  # Shape: (chains, draws)
+    course_distance_dnf_baseline_post = dnf_rate_marathon_avg_post.values[..., np.newaxis] + dnf_distance_multiplier_post.values[..., np.newaxis] * unique_log_distance_ratios  # Shape: (chains, draws)
     course_total_finish_effect_post = course_distance_finish_baseline_post + course_effects_centered_post.sel(course_effect_type='finish_time_total').values
     # Reconstruct course_distance_finish_baseline from fundamentals + data
     # Need to expand dims for broadcasting: (chains, draws) + (chains, draws) * (n_courses,)
@@ -1867,7 +1886,7 @@ def _(np, trace, unique_log_distance_ratios):
     mcmc_dnf_effect_q25 = np.percentile(dnf_flat, 25, axis=0)
     mcmc_dnf_effect_q75 = np.percentile(dnf_flat, 75, axis=0)
     mcmc_dnf_effect_q95 = np.percentile(dnf_flat, 95, axis=0)
-    dnf_rate_marathon_samples_1 = trace.posterior['dnf_rate_marathon'].values.flatten()
+    dnf_rate_marathon_samples_1 = trace.posterior['dnf_rate_marathon'].mean(dim='gender').values.flatten()
     dnf_distance_multiplier_samples_1 = trace.posterior['dnf_distance_multiplier'].values.flatten()
     correlation_samples = trace.posterior['course_correlation'].values.flatten()
     # Compute total DNF effect: baseline + centered_effect[1]
@@ -1933,9 +1952,9 @@ def _(
     _ax.grid(True, color='lightgray', alpha=0.7, linewidth=0.5)
     _ax.set_xlim(10, 100)
     plt.tight_layout()
-    plt.show()
     print(f'Median correlation: {median_correlation:.3f}')
     print(f'Bias at 100mi: {bias_median[-1]:.2f}% (median), [{bias_q05[-1]:.2f}%, {bias_q95[-1]:.2f}%]')
+    plt.gcf()
     return
 
 
@@ -1985,7 +2004,7 @@ def _(np, sigma_finish_time_noise, trace):
     course_correlation_fixed = float(chol_fixed[1, 0] / (chol_fixed[0, 0] * course_effect_sds_fixed[1]))
     # Covariance: C = L @ L.T = [[a^2, ab], [ab, b^2 + c^2]]
     # Stds: [a, sqrt(b^2 + c^2)], Correlation: b / sqrt(a^2 * (b^2 + c^2))
-    dnf_rate_marathon_fixed = float(trace.posterior['dnf_rate_marathon'].median(dim=['chain', 'draw']).values)
+    dnf_rate_marathon_fixed = trace.posterior['dnf_rate_marathon'].median(dim=['chain', 'draw']).values  # shape (n_genders,)
     dnf_distance_multiplier_fixed = float(trace.posterior['dnf_distance_multiplier'].median(dim=['chain', 'draw']).values)  # Finish time SD
     finish_time_noise_fixed = np.array([sigma_finish_time_noise, sigma_finish_time_noise])  # DNF SD
     print('Fixed hyperparameters from k-core MCMC:')
@@ -1996,7 +2015,7 @@ def _(np, sigma_finish_time_noise, trace):
     # DNF model hyperparameters
     print(f'  finish_time_noise (M, F):                [{finish_time_noise_fixed[0]:.4f}, {finish_time_noise_fixed[1]:.4f}] (fixed)')
     print(f'\nDNF Model:')
-    print(f'  dnf_rate_marathon:                       {dnf_rate_marathon_fixed:.4f}')
+    print(f'  dnf_rate_marathon (M, F):                [{dnf_rate_marathon_fixed[0]:.4f}, {dnf_rate_marathon_fixed[1]:.4f}]')
     print(f'  dnf_distance_multiplier:                 {dnf_distance_multiplier_fixed:.4f}')
     print(f'\nCorrelated Course Effects:')
     print(f'  course_effect_sds [finish, dnf]:         [{course_effect_sds_fixed[0]:.4f}, {course_effect_sds_fixed[1]:.4f}]')
@@ -2063,6 +2082,7 @@ def _(
     define_model,
     dnf_distance_multiplier_fixed,
     dnf_rate_marathon_fixed,
+    mo,
     np,
     pace_distance_effect_fixed,
     pace_marathon_fixed,
@@ -2075,7 +2095,9 @@ def _(
     chol_fixed_1 = np.linalg.cholesky(cov_matrix)
     model_map = define_model(results_full, fixed_params={'pace_marathon': pace_marathon_fixed, 'pace_distance_effect': pace_distance_effect_fixed, 'dnf_rate_marathon': dnf_rate_marathon_fixed, 'dnf_distance_multiplier': dnf_distance_multiplier_fixed, 'chol': chol_fixed_1})
     _graph = pm.model_to_graphviz(model_map)
-    _graph
+    mo.Html(
+        f'<div style="max-width:100%; overflow-x:auto">{_graph.pipe(format="svg").decode()}</div>'
+    )
     return chol_fixed_1, model_map
 
 
@@ -2141,11 +2163,12 @@ def _(
         print(f'   ({_elapsed_time / 60:.1f} minutes)')
         _pace_marathon_avg_map = pace_marathon_fixed.mean()
         _pace_distance_effect_avg_map = pace_distance_effect_fixed.mean()
+        _dnf_rate_marathon_avg_map = dnf_rate_marathon_fixed.mean()
         _course_distance_finish_baseline_map = _pace_marathon_avg_map + _pace_distance_effect_avg_map * unique_log_distance_ratios_full
-        course_distance_dnf_baseline_map = dnf_rate_marathon_fixed + dnf_distance_multiplier_fixed * unique_log_distance_ratios_full
+        course_distance_dnf_baseline_map = _dnf_rate_marathon_avg_map + dnf_distance_multiplier_fixed * unique_log_distance_ratios_full
         course_total_finish_effect_map = _course_distance_finish_baseline_map + map_estimate['course_effects_centered'][:, 0]
         course_total_dnf_effect_map = course_distance_dnf_baseline_map + map_estimate['course_effects_centered'][:, 1]
-        map_trace = az.from_dict(posterior={'course_effects_raw': map_estimate['course_effects_raw'][np.newaxis, np.newaxis, :, :], 'course_effects_centered': map_estimate['course_effects_centered'][np.newaxis, np.newaxis, :, :], 'course_total_finish_effect': course_total_finish_effect_map[np.newaxis, np.newaxis, :], 'course_total_dnf_effect': course_total_dnf_effect_map[np.newaxis, np.newaxis, :], 'pace_marathon': pace_marathon_fixed[np.newaxis, np.newaxis, :], 'pace_distance_effect': pace_distance_effect_fixed[np.newaxis, np.newaxis, :], 'dnf_rate_marathon': np.array([[dnf_rate_marathon_fixed]]), 'dnf_distance_multiplier': np.array([[dnf_distance_multiplier_fixed]]), 'course_effect_sds': course_effect_sds_fixed[np.newaxis, np.newaxis, :], 'course_correlation': np.array([[course_correlation_fixed]])}, coords={'course': unique_courses_full, 'gender': unique_genders, 'course_effect_type': ['finish_time_total', 'dnf_total']}, dims={'course_effects_raw': ['course', 'course_effect_type'], 'course_effects_centered': ['course', 'course_effect_type'], 'course_total_finish_effect': ['course'], 'course_total_dnf_effect': ['course'], 'pace_marathon': ['gender'], 'pace_distance_effect': ['gender'], 'course_effect_sds': ['course_effect_type']})
+        map_trace = az.from_dict(posterior={'course_effects_raw': map_estimate['course_effects_raw'][np.newaxis, np.newaxis, :, :], 'course_effects_centered': map_estimate['course_effects_centered'][np.newaxis, np.newaxis, :, :], 'course_total_finish_effect': course_total_finish_effect_map[np.newaxis, np.newaxis, :], 'course_total_dnf_effect': course_total_dnf_effect_map[np.newaxis, np.newaxis, :], 'pace_marathon': pace_marathon_fixed[np.newaxis, np.newaxis, :], 'pace_distance_effect': pace_distance_effect_fixed[np.newaxis, np.newaxis, :], 'dnf_rate_marathon': dnf_rate_marathon_fixed[np.newaxis, np.newaxis, :], 'dnf_distance_multiplier': np.array([[dnf_distance_multiplier_fixed]]), 'course_effect_sds': course_effect_sds_fixed[np.newaxis, np.newaxis, :], 'course_correlation': np.array([[course_correlation_fixed]])}, coords={'course': unique_courses_full, 'gender': unique_genders, 'course_effect_type': ['finish_time_total', 'dnf_total']}, dims={'course_effects_raw': ['course', 'course_effect_type'], 'course_effects_centered': ['course', 'course_effect_type'], 'course_total_finish_effect': ['course'], 'course_total_dnf_effect': ['course'], 'pace_marathon': ['gender'], 'pace_distance_effect': ['gender'], 'dnf_rate_marathon': ['gender'], 'course_effect_sds': ['course_effect_type']})
         map_trace.to_netcdf(map_cache_file)
         print(f'💾 Saved MAP trace to {map_cache_file}')
     print()
@@ -2160,14 +2183,15 @@ def _(
 def _(map_trace, unique_log_distance_ratios_full):
     pace_marathon_map = map_trace.posterior['pace_marathon'].values[0, 0, :]
     pace_distance_effect_map = map_trace.posterior['pace_distance_effect'].values[0, 0, :]
-    dnf_rate_marathon_map = map_trace.posterior['dnf_rate_marathon'].values[0, 0]
+    dnf_rate_marathon_map = map_trace.posterior['dnf_rate_marathon'].values[0, 0, :]
     dnf_distance_multiplier_map = map_trace.posterior['dnf_distance_multiplier'].values[0, 0]
     course_effects_centered_map = map_trace.posterior['course_effects_centered'].values[0, 0, :, :]
     map_courses = map_trace.posterior.coords['course'].values
     _pace_marathon_avg_map = (pace_marathon_map[0] + pace_marathon_map[1]) / 2
     _pace_distance_effect_avg_map = (pace_distance_effect_map[0] + pace_distance_effect_map[1]) / 2
+    _dnf_rate_marathon_avg_map = (dnf_rate_marathon_map[0] + dnf_rate_marathon_map[1]) / 2
     _course_distance_finish_baseline_map = _pace_marathon_avg_map + _pace_distance_effect_avg_map * unique_log_distance_ratios_full
-    course_distance_dnf_baseline_map_1 = dnf_rate_marathon_map + dnf_distance_multiplier_map * unique_log_distance_ratios_full
+    course_distance_dnf_baseline_map_1 = _dnf_rate_marathon_avg_map + dnf_distance_multiplier_map * unique_log_distance_ratios_full
     map_finish_effect_estimates = _course_distance_finish_baseline_map + course_effects_centered_map[:, 0]
     map_dnf_effect_estimates = course_distance_dnf_baseline_map_1 + course_effects_centered_map[:, 1]
     return (
@@ -2304,7 +2328,7 @@ def _(
     # DNF effects scatter
     _ax_runner.legend()
     plt.tight_layout()  # 90% CI (lighter)
-    plt.show()  # 50% CI (darker)
+    plt.gcf()  # 50% CI (darker)
     return
 
 
@@ -2443,7 +2467,7 @@ def _(
         n_show=50,
         sort_ascending=True
     )
-    plt.show()
+    plt.gcf()
     return
 
 
@@ -2482,7 +2506,7 @@ def _(
     # Compute medians and quantiles
     plot_course_forest(map_values=map_values_plot4, mcmc_medians=mcmc_full_dnf_medians, mcmc_q05=mcmc_full_dnf_q05, mcmc_q95=mcmc_full_dnf_q95, xlabel='DNF Odds Ratio (after accounting for distance)', title='DNF Odds Ratios After Accounting for Distance\n(OR=1.0 = average, OR>1.0 = higher DNF odds, OR<1.0 = lower DNF odds)', reference_line=1.0, n_show=50, sort_ascending=True)
     # Reference at 1.0 (average course at distance)
-    plt.show()
+    plt.gcf()
     return
 
 
@@ -2637,13 +2661,14 @@ def _(REFERENCE_DISTANCE, np, pm, pt):
             pace_marathon = pm.Data('pace_marathon', fixed_params['pace_marathon'], dims='gender')
             pace_distance_effect = pm.Data('pace_distance_effect', fixed_params['pace_distance_effect'], dims='gender')
             finish_time_noise = fixed_params['finish_time_noise']
-            dnf_rate_marathon = pm.Data('dnf_rate_marathon', fixed_params['dnf_rate_marathon'])
+            dnf_rate_marathon = pm.Data('dnf_rate_marathon', fixed_params['dnf_rate_marathon'], dims='gender')
             dnf_distance_multiplier = pm.Data('dnf_distance_multiplier', fixed_params['dnf_distance_multiplier'])  # Pre-compute course distances
             chol = pt.as_tensor_variable(fixed_params['chol'])
             pace_marathon_avg = (pace_marathon[0] + pace_marathon[1]) / 2
             pace_distance_effect_avg = (pace_distance_effect[0] + pace_distance_effect[1]) / 2
+            dnf_rate_marathon_avg = (dnf_rate_marathon[0] + dnf_rate_marathon[1]) / 2
             course_distance_finish_baseline = pace_marathon_avg + pace_distance_effect_avg * unique_log_distance_ratios
-            course_distance_dnf_baseline = dnf_rate_marathon + dnf_distance_multiplier * unique_log_distance_ratios
+            course_distance_dnf_baseline = dnf_rate_marathon_avg + dnf_distance_multiplier * unique_log_distance_ratios
             course_effects_raw = pm.Normal('course_effects_raw', mu=0, sigma=1, dims=('course', 'course_effect_type'))
             course_effects_centered = pm.Deterministic('course_effects_centered', pm.math.dot(course_effects_raw, chol), dims=('course', 'course_effect_type'))
             course_total_finish_effect = course_distance_finish_baseline + course_effects_centered[:, 0]
@@ -2659,7 +2684,9 @@ def _(REFERENCE_DISTANCE, np, pm, pt):
             runner_distance_effect = runner_effects_centered[runner_indices_finishers, 1]
             expected_log_pace = pace_marathon[gender_indices_finishers] + pace_distance_effect[gender_indices_finishers] * log_distance_ratio_finishers + course_effects_centered[course_indices_finishers, 0] + runner_baseline_effect + runner_distance_effect * log_distance_ratio_finishers
             pm.Normal('finisher_times', mu=expected_log_pace, sigma=finish_time_noise[gender_indices_finishers], observed=np.log(observed_times_finishers), dims='finishers')
-            logit_p_dnf = course_total_dnf_effect[course_indices_results]
+            gender_indices_results = model_data['gender'].map(gender_to_idx).values
+            gender_dnf_deviation = dnf_rate_marathon[gender_indices_results] - dnf_rate_marathon_avg
+            logit_p_dnf = course_total_dnf_effect[course_indices_results] + gender_dnf_deviation
             pm.Bernoulli('did_finish_obs', p=pm.math.invlogit(logit_p_dnf), observed=did_finish, dims='obs_results')  # === BUILD MODEL ===
         return model  # --- FIXED HYPERPARAMETERS (from k-core MCMC) ---  # Array, not Data  # --- DISTANCE BASELINES (course-level) ---  # --- COURSE EFFECTS (same as original) ---  # --- RUNNER EFFECTS (NEW!) ---  # Build Cholesky matrix for runner effects from hyperparameters  # Cholesky decomposition of correlation matrix  # L = [[a, 0], [b, c]] where a = sigma_pace, b = rho * sigma_dist, c = sqrt(1 - rho^2) * sigma_dist  # Non-centered parameterization for runner effects  # --- LIKELIHOOD ---  # FINISH TIME MODEL with runner effects  # Gender-specific shrinkage: runner effects are deviations from gender baseline  # Extract runner effects for each finisher  # Build expected pace from components:  # 1. Gender-specific baseline pace at marathon distance  # 2. Gender-specific distance scaling effect  # 3. Course difficulty (deviation from population average)  # 4. Runner baseline effect (deviation from their gender's baseline)  # 5. Runner distance effect (deviation from their gender's distance scaling)  # DNF MODEL (unchanged - no runner effects)
 
@@ -2716,6 +2743,7 @@ def _(
     dnf_distance_multiplier_fixed,
     dnf_rate_marathon_fixed,
     finish_time_noise_fixed,
+    mo,
     n_courses_full,
     n_runners_full,
     pace_distance_effect_fixed,
@@ -2742,7 +2770,9 @@ def _(
     print(f'  Total observations:        {len(results_full):,}')
     print('\n📊 Model structure:')
     _graph = pm.model_to_graphviz(model_with_runners)
-    _graph
+    mo.Html(
+        f'<div style="max-width:100%; overflow-x:auto">{_graph.pipe(format="svg").decode()}</div>'
+    )
     return (model_with_runners,)
 
 
@@ -2892,7 +2922,6 @@ def _(plt, runner_baseline_pace, runner_distance_effect, runner_gender, sns):
     _ax2.set_facecolor('white')
     plt.tight_layout()
     # Plot 2: Distance Effect Distribution
-    plt.show()
     print('\nRunner Effect Summary Statistics:')
     print('=' * 80)
     for _gender in ['M', 'F']:
@@ -2908,6 +2937,7 @@ def _(plt, runner_baseline_pace, runner_distance_effect, runner_gender, sns):
         print(f'    Range:  [{runner_distance_effect[_mask].min():+.4f}, {runner_distance_effect[_mask].max():+.4f}]')
     # Summary statistics
     print('=' * 80)
+    plt.gcf()
     return
 
 
@@ -2947,10 +2977,10 @@ def _(np, plt, runner_baseline_pace, runner_distance_effect, runner_gender):
     # Add quadrant labels
     _ax.set_facecolor('white')
     plt.tight_layout()
-    plt.show()
     print(f'\nCorrelation between baseline pace and distance effect: {np.corrcoef(runner_baseline_pace, runner_distance_effect)[0, 1]:.4f}')
     # Calculate correlation
     print(f"Interpretation: {('Fast runners slow down MORE with distance' if np.corrcoef(runner_baseline_pace, runner_distance_effect)[0, 1] < 0 else 'Fast runners slow down LESS with distance')}")
+    plt.gcf()
     return
 
 
@@ -3055,7 +3085,7 @@ def _(
 ):
     # Plot 4 & 5: Fastest and Slowest Runners (Baseline Pace)
     _fig, _ax = plot_runner_forest(runner_baseline_pace, map_runners_arr, runner_gender, runner_race_counts, xlabel='Baseline Pace Adjustment (log minutes)', title='Top 50 Fastest & Bottom 50 Slowest Runners (Baseline Pace)\nMAP Estimates (≥5 races)', reference_line=0.0, n_show=50, sort_ascending=True, min_races=5, runner_names=runner_full_names)
-    plt.show()
+    plt.gcf()
     return
 
 
@@ -3072,7 +3102,7 @@ def _(
     # Plot 6 & 7: Best and Worst Distance Scalers
     # Filter to runners with multiple races for better identification
     _fig, _ax = plot_runner_forest(runner_distance_effect, map_runners_arr, runner_gender, runner_race_counts, xlabel='Distance Scaling Adjustment', title='Top 50 Best & Bottom 50 Worst Distance Scalers\nMAP Estimates (≥3 races)', reference_line=0.0, n_show=50, sort_ascending=True, min_races=3, runner_names=runner_full_names)
-    plt.show()
+    plt.gcf()
     return
 
 
@@ -3141,13 +3171,13 @@ def _(
     _ax2.set_facecolor('white')
     _ax2.set_xlim(left=0)
     plt.tight_layout()
-    plt.show()
     print('\nShrinkage Demonstration:')
     print('=' * 80)
     print('Runners with few races have effects closer to 0 (gender baseline)')
     print('Runners with many races get individualized estimates away from 0')
     print('This is hierarchical shrinkage in action!')
     print('=' * 80)
+    plt.gcf()
     return
 
 

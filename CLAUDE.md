@@ -92,7 +92,7 @@ PYEOF
 
 ### Cell-private vs cross-cell variables
 
-Marimo treats single-underscore-prefixed names (`_var`) as cell-private: they don't leak across cells. Use this to avoid `MultipleDefinitionError` when loop variables (`for _i, _x in ...`) would otherwise leak. Names without the underscore prefix become cross-cell exports — only use those when other cells need to read them. The `_fig` vs `fig` collision in `2_observed_dnfs.py:plot_ppc` we hit during conversion was exactly this issue: the function parameter was `fig` but the body used `_fig`, which marimo namespaced as cell-private and left undefined.
+Marimo treats single-underscore-prefixed names (`_var`) as cell-private: they don't leak across cells. Use this to avoid `MultipleDefinitionError` when loop variables (`for _i, _x in ...`) would otherwise leak. Names without the underscore prefix become cross-cell exports — only use those when other cells need to read them. The `_fig` vs `fig` collision in `3_observed_dnfs.py:plot_ppc` we hit during conversion was exactly this issue: the function parameter was `fig` but the body used `_fig`, which marimo namespaced as cell-private and left undefined.
 
 ### Pre-flight checks before structural edits
 
@@ -111,9 +111,38 @@ Surfaces existing errors so you don't pile new edits on a broken graph.
 
 ## Sampling on macOS
 
-- `nuts_sampler='nutpie'` is the default for dev iteration. Pure Rust, no JAX, ~20× faster than the PyMC Python NUTS for our models.
-- `nuts_sampler='blackjax'` is broken on Apple Silicon: `UNIMPLEMENTED: default_memory_space is not supported.` from `jax-metal`. Workaround is `JAX_PLATFORMS=cpu` to force CPU JAX, but nutpie is faster anyway.
-- For final inference (Linux/GPU box, e.g. RunPod), `numpyro` is fine.
+### Hard rule: the user must be able to follow the sampler live
+
+Live progress in the browser tab is non-negotiable. The user should never have to refresh, tail logs, run `ps`, or guess which cell is running. To guarantee that:
+
+1. **Default to `nuts_sampler='nutpie'`.** Nutpie's progress messages route through marimo's display callback and render as the **native marimo progress widget** in the cell output — visible in real time without refresh.
+2. **Never silently fall back to `nuts_sampler='numpyro'` on macOS.** Numpyro's progress is raw JAX tqdm to stderr. Marimo renders it as plain text, often with carriage-return artifacts that don't update visibly. If you switch to numpyro, the user will say "I can't see what's running."
+3. **Never use `nuts_sampler='blackjax'` on Apple Silicon.** It dies with `UNIMPLEMENTED: default_memory_space is not supported` from jax-metal. `JAX_PLATFORMS=cpu` works but nutpie is still faster.
+4. **PyMC's default NUTS shows the marimo widget too**, but is ~10× slower than nutpie. Use only when nutpie is genuinely impossible.
+5. **Every long-running cell must emit a beacon as its first output** so the user can locate it from any view (edit *or* app). Use a `mo.callout` with the operation name, start timestamp, and expected duration:
+   ```python
+   import datetime
+   mo.output.replace(mo.callout(
+       f"⏳ Sampling Model 3 (observed DNFs) — started {datetime.datetime.now():%H:%M:%S}, expected ~70 min",
+       kind="info",
+   ))
+   # ... then pm.sample(...)
+   ```
+   This way the cell renders a visible block immediately, before sampling output starts streaming, and stays visible the whole time. Without it, an empty-output running cell is invisible in app view (where running-cell indicators are hidden by design — app view assumes end users aren't running anything).
+6. **Tell the user to use edit view when actively watching MCMC.** App view hides running-cell indicators by design. Edit view shows the sticky status bar at the top with the running cell ID and a pulsing border around the running cell.
+
+### When nutpie blows up — fix nutpie, don't switch samplers
+
+The temptation is to flip `nuts_sampler='numpyro'` and move on. **Don't.** Diagnose and patch the model so nutpie works. Known issues:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `TypingError: cumsum(array(float64, 1d, C), axis=Literal[int](0))` | Numba (used by nutpie's compile path) doesn't accept the `axis=` kwarg on 1D `cumsum` calls. PyMC's `LKJCholeskyCov` produces such a call internally. | Replace `LKJCholeskyCov` with manual parametrization: separate `pm.HalfNormal` for each std + `pm.LKJCorr(n=k, eta=eta, return_matrix=True)` for the correlation matrix, then assemble Σ and take `pm.math.cholesky(Σ)`. Keeps the same prior, dodges the cumsum. |
+| `UNIMPLEMENTED: default_memory_space is not supported` | jax-metal incompatibility. | Don't use blackjax/numpyro on Apple Silicon. |
+| `divergences > 0`, very slow tuning | Bad geometry, not a sampler bug. | Reparametrize: non-centered hierarchies, looser priors on hyperparams, scale the data. |
+
+For final inference on RunPod/GPU, `numpyro` is fine because no humans are watching the progress bar.
+
 - The existing `Dockerfile` + `entrypoint.sh` set up a RunPod-compatible image with JAX-CUDA and JupyterLab — reach for that when local CPU sampling is intractable.
 
 ## K-core dev pattern
@@ -127,7 +156,7 @@ The `0_kcore.py` notebook explores the (α, β) Pareto frontier and selects a de
 | (3, 423) | 499K | 266 | 222K | hours; intractable on macOS |
 | (3, 233) | 591K | ~510 | ~190K | nb 2 ran in <30 min (production sized) |
 
-Filter pipelines differ: `1_finish_times` and `0_kcore` use `filter_races_with_dnfs`; `2_observed_dnfs` and `4_unobserved_dnfs` don't, so the same (α, β) gives different course counts. Inspect the resulting `n_courses` after subsetting before judging whether the model is identifiable.
+Filter pipelines differ: `1_finish_times` and `0_kcore` use `filter_races_with_dnfs`; `3_observed_dnfs` and `4_unobserved_dnfs` don't, so the same (α, β) gives different course counts. Inspect the resulting `n_courses` after subsetting before judging whether the model is identifiable.
 
 ## Cache paths
 
