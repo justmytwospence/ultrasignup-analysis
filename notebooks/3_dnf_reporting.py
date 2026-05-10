@@ -234,7 +234,6 @@ def _(az, os, pm, reporting_model):
         print(f"Saved trace to {reporting_cache_file}")
 
     print(az.summary(reporting_trace, var_names=['mu_logit_dnf', 'beta_distance_dnf', 'kappa']))
-
     return (reporting_trace,)
 
 
