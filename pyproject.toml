@@ -41,5 +41,11 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["utils*"]
 
+[tool.marimo.runtime]
+# 0_kcore.py's 3D wireframe carries 9 toggle states (3 z-axes × 3 colors)
+# which serializes to ~24MB. Override the 8MB user-config default
+# (~/.config/marimo/marimo.toml) for this project.
+output_max_bytes = 40_000_000
+
 # Note: jax-metal enables GPU acceleration on Apple Silicon Macs
 # For NVIDIA GPUs, use "jax[cuda12]>=0.8.0" instead

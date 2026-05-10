@@ -1,7 +1,7 @@
 import marimo
 
 __generated_with = "0.23.4"
-app = marimo.App()
+app = marimo.App(width="medium")
 
 
 @app.cell
@@ -127,7 +127,7 @@ def _(Path, os):
     alpha = 3  # Minimum courses per k-core runner
     beta = 840  # Minimum runners per k-core course
 
-    tune = 1000
+    tune = 2000
     draws = 1000
     target_accept = 0.9
 
@@ -255,6 +255,7 @@ def _(mo):
 def _(
     beta_f,
     beta_m,
+    mo,
     model_data,
     model_dir,
     mu_pace_f,
@@ -278,23 +279,31 @@ def _(
     reference_distance_1 = 26.2
     coords = {'course': unique_courses, 'gender': unique_genders, 'finishers': range(n_observations)}
     with pm.Model(coords=coords) as model:
-        _pace_marathon = pm.Normal('pace_marathon', mu=[mu_pace_m, mu_pace_f], sigma=0.1, dims='gender')
+        # Loosened from sigma=0.1 → 0.3 so the prior doesn't fight the likelihood at
+        # the tails of the empirical pace distribution.
+        _pace_marathon = pm.Normal('pace_marathon', mu=[mu_pace_m, mu_pace_f], sigma=0.3, dims='gender')
         _pace_distance_effect = pm.Normal('pace_distance_effect', mu=[beta_m, beta_f], sigma=0.05, dims='gender')
         _course_finish_time_multiplier_std = pm.HalfNormal('course_finish_time_multiplier_std', sigma=sigma_course_prior)
+        # finish_time_noise is now sigma on log(time) — same prior scale (~0.15) gives
+        # ~16% CV per finisher, matching the previous Normal-on-time model's effective
+        # dispersion but with proper positive-support, multiplicative noise.
         _finish_time_noise = pm.HalfNormal('finish_time_noise', sigma=0.15, dims='gender')
         _course_finish_time_multiplier_raw = pm.Normal('course_finish_time_multiplier_raw', mu=0, sigma=1, dims='course')
         _course_finish_time_multiplier = pm.Deterministic('course_finish_time_multiplier', _course_finish_time_multiplier_std * _course_finish_time_multiplier_raw, dims='course')
         _log_distance_ratio = pm.math.log(race_distances / reference_distance_1)
         _expected_log_pace = _pace_marathon[gender_indices] + _pace_distance_effect[gender_indices] * _log_distance_ratio + _course_finish_time_multiplier[course_indices]
         _expected_pace = pm.Deterministic('expected_pace', pm.math.exp(_expected_log_pace), dims='finishers')
-        _expected_time = _expected_pace * race_distances
-        pm.Normal('finish_times', mu=_expected_time, sigma=_finish_time_noise[gender_indices] * race_distances, observed=observed_times, dims='finishers')
+        _expected_log_time = _expected_log_pace + pm.math.log(race_distances)
+        pm.LogNormal('finish_times', mu=_expected_log_time, sigma=_finish_time_noise[gender_indices], observed=observed_times, dims='finishers')
     _graph = pm.model_to_graphviz(model)
     graph_file = f'{model_dir}/model_structure'
     _graph.graph_attr['dpi'] = '72'
     _graph.render(graph_file, format='png', cleanup=True)
     print(f'Saved model structure to {graph_file}.png')
-    _graph
+    # Wrap SVG in a scrollable container so wide DAGs don't overflow the cell.
+    mo.Html(
+        f'<div style="max-width:100%; overflow-x:auto">{_graph.pipe(format="svg").decode()}</div>'
+    )
     return (
         gender_indices,
         gender_to_idx,
@@ -409,7 +418,7 @@ def _(
     plt.tight_layout()
     # 3. course_finish_time_multiplier_std (scalar) - as time multiplier
     # 4. finish_time_noise (gender-specific) - as time multiplier
-    plt.show()
+    _fig
     return
 
 
@@ -426,6 +435,7 @@ def _(mo):
 @app.cell
 def _(
     gender_to_idx,
+    mo,
     n_courses,
     n_genders,
     np,
@@ -445,6 +455,7 @@ def _(
     _full_observed_times = results_2['time_ms'].values / 60000
     _full_gender_indices = results_2['gender'].map(gender_to_idx).values
     _full_race_distances = results_2['distance_miles'].values
+    _figs_priorppc = []
     for _gender_idx, _gender in enumerate(unique_genders):
         _fig, _axes = plt.subplots(2, 4, figsize=(16, 8))
         _axes = _axes.flatten()
@@ -485,7 +496,8 @@ def _(
         _fig.legend(_handles, _labels, loc='upper center', bbox_to_anchor=(0.5, 0.98), ncol=2, fontsize=10, frameon=False)
         _fig.suptitle(f'Prior Predictive Check: {_gender_display_names[_gender]} Finish Times', fontsize=14, fontweight='bold', y=1.0)
         plt.tight_layout(rect=[0, 0, 1, 0.96])
-        plt.show()
+        _figs_priorppc.append(_fig)
+    mo.vstack(_figs_priorppc)
     return
 
 
@@ -522,7 +534,7 @@ def _(plt, prior_pred):
     _ax.grid(alpha=0.3)
     plt.tight_layout()
     # Add reference lines
-    plt.show()
+    _fig
     return
 
 
@@ -603,6 +615,7 @@ def _(
     az,
     draws,
     hyperparam_vars,
+    mo,
     np,
     plt,
     subset_dir,
@@ -620,22 +633,23 @@ def _(
     plt.savefig(traceplot_file, dpi=300, bbox_inches='tight')
     print(f"Saved traceplot to {traceplot_file}")
 
-    plt.show()
+    _hp_trace_fig = plt.gcf()
 
     # traceplot for sample of course difficulty parameters
     course_coords = list(trace.posterior.coords['course'].values)
     sample_course_ids = np.random.choice(course_coords, size=min(20, len(course_coords)), replace=False)
 
     az.plot_trace(
-        trace, 
+        trace,
         var_names=['course_finish_time_multiplier'],
         coords={'course': sample_course_ids},
-        compact=True, 
+        compact=True,
         figsize=(12, 20)
     )
     plt.suptitle('MCMC Traces: Sample Course Finish Time Multiplier Parameters', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plt.show()
+    _course_trace_fig = plt.gcf()
+    mo.vstack([_hp_trace_fig, _course_trace_fig])
     return
 
 
@@ -689,6 +703,7 @@ def _(model, pm, trace):
 def _(
     gender_indices,
     gender_to_idx,
+    mo,
     np,
     observed_times,
     plt,
@@ -707,6 +722,7 @@ def _(
     kcore_observed_times = observed_times
     kcore_gender_indices = gender_indices
     kcore_race_distances = race_distances
+    _figs_postppc = []
     for _gender_idx, _gender in enumerate(unique_genders):
         _fig, _axes = plt.subplots(2, 4, figsize=(16, 8))
         _axes = _axes.flatten()
@@ -756,7 +772,8 @@ def _(
         _fig.legend(_handles, _labels, loc='upper center', bbox_to_anchor=(0.5, 0.98), ncol=3, fontsize=10, frameon=False)
         _fig.suptitle(f'Posterior Predictive Check: {_gender_display_names[_gender]}', fontsize=14, fontweight='bold', y=1.0)
         plt.tight_layout(rect=[0, 0, 1, 0.96])
-        plt.show()
+        _figs_postppc.append(_fig)
+    mo.vstack(_figs_postppc)
     return
 
 
@@ -825,7 +842,7 @@ def _(
     _ax.grid(alpha=0.3, linestyle='--')
     _ax.set_xlim(5, 100)
     plt.tight_layout()
-    plt.show()
+    _fig
     return
 
 
@@ -853,7 +870,7 @@ def _(az, np, plt, trace):
     plt.grid(alpha=0.3, axis='x')
     plt.tight_layout()
     # Add zero reference line
-    plt.show()
+    plt.gcf()
     return
 
 
@@ -985,6 +1002,7 @@ def _(
     course_indices_full,
     finish_time_noise_fixed,
     gender_indices_full,
+    mo,
     n_courses,
     n_courses_full,
     n_observations_full,
@@ -1020,7 +1038,9 @@ def _(
     print(f'\nFree parameters (to be estimated):')
     print(f'  course_finish_time_multiplier_raw (N = {n_courses_full:,})')
     _graph = pm.model_to_graphviz(model_map)
-    _graph
+    mo.Html(
+        f'<div style="max-width:100%; overflow-x:auto">{_graph.pipe(format="svg").decode()}</div>'
+    )
     return (model_map,)
 
 
@@ -1210,7 +1230,6 @@ def _(
     _ax.set_xlim(lims)
     _ax.set_ylim(lims)
     plt.tight_layout()
-    plt.show()
     kcore_outliers_mask = (map_kcore_estimates < kcore_q05) | (map_kcore_estimates > kcore_q95)
     if kcore_outliers_mask.any():
         print(f'\n⚠️  K-Core Outliers ({kcore_outliers_mask.sum()} courses where MAP is outside 90% CI):')
@@ -1232,6 +1251,7 @@ def _(
     # Add correlation and MAE annotations
     # Identify outliers (MAP outside 90% credible interval) for k-core courses
         print('\n✅ No k-core outliers: All MAP estimates within MCMC 90% credible intervals!')  # Show first 10
+    _fig
     return
 
 
@@ -1298,7 +1318,7 @@ def _(
     _ax.set_title('Closure-Only', fontsize=13, fontweight='bold')
     _ax.grid(alpha=0.3)
     plt.tight_layout()
-    plt.show()
+    _fig
     return
 
 
@@ -1388,7 +1408,7 @@ def _(
     # Add zero reference line
     # Configure axes
     # Add legend
-    plt.show()  # K-core: blue circle with credible interval  # Closure-only: green triangle with credible interval  # Hardest at top
+    _fig  # K-core: blue circle with credible interval  # Closure-only: green triangle with credible interval  # Hardest at top
     return
 
 
