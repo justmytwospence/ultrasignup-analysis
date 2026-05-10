@@ -173,11 +173,13 @@ def _():
     JAX_DEVICE_COUNT = jax.local_device_count()  # Number of devices available for parallel chains
 
     if IS_MACOS:
-        # macOS: Use blackjax for better CPU compatibility
-        NUTS_SAMPLER = 'nutpie'
+        # macOS: nutpie hits a numba cumsum-axis bug with current LKJCholeskyCov.
+        # PyMC default NUTS is too slow for dev iteration. Use numpyro on CPU.
+        os.environ.setdefault('JAX_PLATFORMS', 'cpu')
+        NUTS_SAMPLER = 'numpyro'
         N_CHAINS = 4
         N_CORES = 4
-        PLATFORM_CONFIG = f"macOS (CPU + blackjax, {JAX_DEVICE_COUNT} devices)"
+        PLATFORM_CONFIG = f"macOS (numpyro CPU, {JAX_DEVICE_COUNT} devices)"
     elif IS_LINUX and HAS_GPU:
         # Linux with GPU: Use numpyro for CUDA optimization
         NUTS_SAMPLER = 'numpyro'
@@ -336,7 +338,7 @@ def _(Path, os, results_1, subset_kcore_data):
     # (3, 233): 510 courses   ← previous default
     # (3, 220): 541 courses
     alpha = 3
-    beta = 423
+    beta = 629  # cached trace at tune=500/draws=500/accept=0.8 has r_hat=1.010, ess=858, div=0
     # Path is anchored to the notebook file so caches resolve regardless of
     # marimo's CWD (which is the dir you ran 'uv run marimo' from, not notebooks/)
     model_dir = Path(__file__).resolve().parent / 'models' / 'model_2'
@@ -1467,7 +1469,7 @@ def _(
     # Dev iteration sampling budget. For final inference bump to TUNE=2000, DRAWS=2000.
     TUNE = 500
     DRAWS = 500
-    TARGET_ACCEPT = 0.95
+    TARGET_ACCEPT = 0.8  # matches existing cached trace at (3, 629)/tune500/draws500/accept0.8
     cache_file = f'{subset_dir}/tune{TUNE}_draws{DRAWS}_accept{TARGET_ACCEPT}.nc'
     hyperparam_vars = ['pace_marathon', 'pace_distance_effect', 'finish_time_noise', 'dnf_rate_marathon', 'dnf_distance_multiplier']
     if os.path.exists(cache_file):
