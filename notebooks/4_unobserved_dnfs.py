@@ -391,18 +391,19 @@ def _(mo):
 
 @app.cell
 def _(results, subset_kcore_data):
-    # K-core parameters. Default = (3, 840) — the dev k-core selected in 0_kcore.
-    # Iterate on (3, 840) for fast feedback; switch to a looser config for final inference.
-    # Looser candidate configs evaluated in 0_kcore: (5, 25), (3, 233), (3, 423), etc.
-    alpha = 3  # Minimum courses per k-core runner
-    beta = 840  # Minimum runners per k-core course
+    # K-core parameters. Default = (3, 629) for dev iteration.
+    # (3, 840): 11 courses → unidentifiable, R-hat ~4.5
+    # (3, 423): 266 courses + ~222K runner effects → intractable on macOS (>3h)
+    # (3, 629): ~93 courses + ~50K runners → middle ground for dev
+    alpha = 3
+    beta = 629
     results_1 = subset_kcore_data(results, alpha=alpha, beta=beta)
     # Apply k-core flagging with course-completion closure
     model_data = results_1[results_1['in_kcore'] | results_1['in_closure']]
     print(f"\n{'=' * 80}")
     print(f'SUBSET SUMMARY')
     print(f"{'=' * 80}")
-    print(f'K-core subset (α={alpha}, β={beta}):')
+    print(f'K-core subset (alpha={alpha}, beta={beta}):')
     print(f"  K-core results: {results_1['in_kcore'].sum():,}")
     print(f"  Closure results: {results_1['in_closure'].sum():,}")
     print(f'  Total for modeling: {len(model_data):,} (down from {len(results_1):,})')
