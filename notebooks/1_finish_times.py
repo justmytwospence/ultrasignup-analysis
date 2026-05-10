@@ -119,13 +119,16 @@ def _(Path, os):
 
     reference_distance = 26.2  # Marathon
 
-    # K-core parameters. Default = (3, 840) — the dev k-core selected in 0_kcore.
-    # Iterate on (3, 840) for fast feedback; switch to a looser config for final inference.
+    # K-core parameters for dev iteration.
+    # Cached traces at (3, 840) and (3, 423) tune=500 were fit with broken time units
+    # (observed_times /1000 instead of /60000). Bumping to tune=1000/draws=1000 forces
+    # a fresh fit with corrected units. (3, 840) keeps the dataset small (~11 courses,
+    # ~22K entities) so the fit completes in single-digit minutes for diagnostics.
     alpha = 3  # Minimum courses per k-core runner
     beta = 840  # Minimum runners per k-core course
 
-    tune = 500
-    draws = 500
+    tune = 1000
+    draws = 1000
     target_accept = 0.9
 
     # Path is anchored to the notebook file so caches resolve regardless of
@@ -271,7 +274,7 @@ def _(
     course_indices = model_data['course_idx'].values
     gender_indices = model_data['gender_idx'].values
     race_distances = model_data['distance_miles'].values
-    observed_times = model_data['time_ms'].values / 1000
+    observed_times = model_data['time_ms'].values / 60000  # minutes (matches expected_time units)
     reference_distance_1 = 26.2
     coords = {'course': unique_courses, 'gender': unique_genders, 'finishers': range(n_observations)}
     with pm.Model(coords=coords) as model:
@@ -1191,10 +1194,11 @@ def _(
     kcore_fit_x = np.array([map_kcore_estimates.min(), map_kcore_estimates.max()])
     kcore_fit_y = kcore_slope * kcore_fit_x + kcore_intercept
     _ax.plot(kcore_fit_x, kcore_fit_y, color='steelblue', linewidth=2, alpha=0.7, linestyle=':', label=f'K-Core Fit (slope={kcore_slope:.3f})')
-    closure_only_slope, closure_only_intercept, _, _, _ = linregress(map_closure_only_estimates, mcmc_closure_only_medians)
-    closure_only_fit_x = np.array([map_closure_only_estimates.min(), map_closure_only_estimates.max()])
-    closure_only_fit_y = closure_only_slope * closure_only_fit_x + closure_only_intercept
-    _ax.plot(closure_only_fit_x, closure_only_fit_y, color='limegreen', linewidth=2, alpha=0.7, linestyle=':', label=f'Closure-Only Fit (slope={closure_only_slope:.3f})')
+    if len(map_closure_only_estimates) >= 2:
+        closure_only_slope, closure_only_intercept, _, _, _ = linregress(map_closure_only_estimates, mcmc_closure_only_medians)
+        closure_only_fit_x = np.array([map_closure_only_estimates.min(), map_closure_only_estimates.max()])
+        closure_only_fit_y = closure_only_slope * closure_only_fit_x + closure_only_intercept
+        _ax.plot(closure_only_fit_x, closure_only_fit_y, color='limegreen', linewidth=2, alpha=0.7, linestyle=':', label=f'Closure-Only Fit (slope={closure_only_slope:.3f})')
     # CLOSURE-ONLY COURSES: Added entities with credible intervals
     _ax.text(0.05, 0.95, f'K-Core:\n  r = {kcore_correlation:.4f}\n  MAE = {kcore_mae:.4f}\n  RMSE = {kcore_rmse:.4f}', transform=_ax.transAxes, fontsize=11, verticalalignment='top', bbox=dict(boxstyle='round', facecolor='steelblue', alpha=0.4))
     _ax.text(0.95, 0.95, f'Closure-Only:\n  r = {closure_only_correlation:.4f}\n  MAE = {closure_only_mae:.4f}\n  RMSE = {closure_only_rmse:.4f}', transform=_ax.transAxes, fontsize=11, verticalalignment='top', horizontalalignment='right', bbox=dict(boxstyle='round', facecolor='limegreen', alpha=0.4))
@@ -1269,26 +1273,29 @@ def _(
     _ax.grid(alpha=0.3)
     _ax = _axes[1]
     _closure_only_indices = np.where(is_closure_only_course)[0]
-    closure_only_map = map_closure_only_estimates
-    closure_only_mcmc = mcmc_medians[_closure_only_indices]
-    closure_only_differences = 100 * (closure_only_map - closure_only_mcmc) / closure_only_mcmc
-    closure_p2_5 = np.percentile(closure_only_differences, 2.5)
-    closure_p97_5 = np.percentile(closure_only_differences, 97.5)
-    closure_xlim = max(abs(closure_p2_5), abs(closure_p97_5))
-    closure_bins = np.linspace(-closure_xlim, closure_xlim, 50)
-    _ax.hist(closure_only_differences, bins=closure_bins, alpha=0.7, histtype='step', linewidth=2, color='limegreen', edgecolor='darkgreen')
-    _ax.axvline(x=0, linestyle='--', color='red', linewidth=2, label='Perfect Agreement', alpha=0.7)
-    closure_mean_diff = closure_only_differences.mean()
-    closure_std_diff = closure_only_differences.std()
-    closure_median_diff = np.median(closure_only_differences)
-    closure_mae = np.mean(np.abs(closure_only_differences))
-    stats_text = f'Closure-Only Stats (n={len(closure_only_differences)}):\n  Mean: {closure_mean_diff:+.2f}%\n  Median: {closure_median_diff:+.2f}%\n  MAE: {closure_mae:.2f}%\n  Std: {closure_std_diff:.2f}%'
-    _ax.text(0.98, 0.98, stats_text, transform=_ax.transAxes, fontsize=10, verticalalignment='top', horizontalalignment='right', bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.6))
+    if len(_closure_only_indices) > 0:
+        closure_only_map = map_closure_only_estimates
+        closure_only_mcmc = mcmc_medians[_closure_only_indices]
+        closure_only_differences = 100 * (closure_only_map - closure_only_mcmc) / closure_only_mcmc
+        closure_p2_5 = np.percentile(closure_only_differences, 2.5)
+        closure_p97_5 = np.percentile(closure_only_differences, 97.5)
+        closure_xlim = max(abs(closure_p2_5), abs(closure_p97_5))
+        closure_bins = np.linspace(-closure_xlim, closure_xlim, 50)
+        _ax.hist(closure_only_differences, bins=closure_bins, alpha=0.7, histtype='step', linewidth=2, color='limegreen', edgecolor='darkgreen')
+        _ax.axvline(x=0, linestyle='--', color='red', linewidth=2, label='Perfect Agreement', alpha=0.7)
+        closure_mean_diff = closure_only_differences.mean()
+        closure_std_diff = closure_only_differences.std()
+        closure_median_diff = np.median(closure_only_differences)
+        closure_mae = np.mean(np.abs(closure_only_differences))
+        stats_text = f'Closure-Only Stats (n={len(closure_only_differences)}):\n  Mean: {closure_mean_diff:+.2f}%\n  Median: {closure_median_diff:+.2f}%\n  MAE: {closure_mae:.2f}%\n  Std: {closure_std_diff:.2f}%'
+        _ax.text(0.98, 0.98, stats_text, transform=_ax.transAxes, fontsize=10, verticalalignment='top', horizontalalignment='right', bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.6))
+        _ax.set_xlim(-closure_xlim, closure_xlim)
+        _ax.legend(fontsize=11)
+    else:
+        _ax.text(0.5, 0.5, 'No closure-only courses', transform=_ax.transAxes, ha='center', va='center', fontsize=14)
     _ax.set_xlabel('% Difference', fontsize=12, fontweight='bold')
     _ax.set_ylabel('Frequency', fontsize=12, fontweight='bold')
     _ax.set_title('Closure-Only', fontsize=13, fontweight='bold')
-    _ax.set_xlim(-closure_xlim, closure_xlim)
-    _ax.legend(fontsize=11)
     _ax.grid(alpha=0.3)
     plt.tight_layout()
     plt.show()
