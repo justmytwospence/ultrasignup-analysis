@@ -1,5 +1,21 @@
 # Project Audit: Findings and Fix Plan
 
+## Outcome (2026-06-11)
+
+Implemented. A1-A3 and B1-B4 fixed; improvements filed as UltraSignup-e4o, -7yu,
+-rl7, -do5, -0dy, -3sb; bugs closed as -d54, -rwy, -yzd, -618. Deviations from plan:
+- Root repo has NO remote (the audit agent's "unreachable HTTPS remote" was wrong);
+  creating a new GitHub repo was denied by the permission classifier, so root stays
+  local-only and CLAUDE.md now documents per-repo pushes for repos with remotes.
+- A2: *.nc was already gitignored; the real gap was an absolute-path traceplot
+  symlink + untracked diagnostics PNGs — materialized and committed per convention.
+- Stale caches from changed models quarantined with .stale-pre-audit-fix suffix
+  (nb 2 reporting trace, nb 4 m5 trace, nb 3 map_full_dataset x3) — refits required.
+- Fixes verified with synthetic-data compile tests (truncation term matches scipy
+  betabinom analytically; nb 4 masked logp differs from double-counting model by
+  exactly the removed terms; nb 1 MAP builds and optimizes). Full refits on real
+  data are the next session's work.
+
 ## Context
 
 Full audit of the UltraSignup workspace requested, with emphasis on the **PyMC modeling
