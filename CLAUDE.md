@@ -31,13 +31,13 @@ bd close <id>         # Complete work
 1. **File issues for remaining work** - Create issues for anything that needs follow-up
 2. **Run quality gates** (if code changed) - Tests, linters, builds
 3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
+4. **PUSH TO REMOTE** - This is MANDATORY, in every repo you touched (root, `scraper/`, `analysis/` each have their own remote):
    ```bash
    git pull --rebase
-   bd dolt push
    git push
    git status  # MUST show "up to date with origin"
    ```
+   Beads runs in embedded mode with no dolt remote — there is no `bd dolt push` step; issue state syncs via the committed `.beads/issues.jsonl` in the root repo.
 5. **Clean up** - Clear stashes, prune remote branches
 6. **Verify** - All changes committed AND pushed
 7. **Hand off** - Provide context for next session
@@ -56,7 +56,7 @@ This is a **monorepo of two independent git repos** plus shared workspace toolin
 
 - `scraper/` — Python web scraper for UltraSignup.com. Writes to a DuckDB file. Has its own `.git`, `.venv`, `pyproject.toml`. CLI commands: `scrape-participants`, `scrape-races-from-participants`, `scrape-results`, `scrape-races-incremental`, `extract-elevations`, `enrich-races`, `estimate`. See `scraper/README.md` for the full API/schema reference.
 - `analysis/` — PyMC Bayesian modeling layer. Reads the DuckDB written by `scraper/`. Has its own `.git`, `.venv`, `pyproject.toml`. Notebooks under `analysis/notebooks/` model finish times, DNFs, reporting bias.
-- `data/cache/` — root-level shared caches (mostly stale; the canonical analytical DB is `analysis/data/ultrasignup.duckdb`).
+- `data/` — empty, reserved for shared caches; the canonical analytical DB is `analysis/data/ultrasignup.duckdb`.
 - The project root itself is a thin git repo created by `bd init` to hold `.beads/`, `.claude/`, `CLAUDE.md`, `AGENTS.md`, and the DuckDB MCP config. Don't `git add scraper/` or `git add analysis/` from root — they're nested repos and would become broken submodule pointers. Commit inside each subrepo.
 
 ### Data flow
