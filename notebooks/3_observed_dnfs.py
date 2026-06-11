@@ -647,6 +647,7 @@ def _(
             - 'pace_distance_effect': array of length 2 [M, F]
             - 'dnf_rate_marathon': scalar
             - 'dnf_distance_multiplier': scalar
+            - 'finish_time_noise': array of length 2 [M, F]
             - 'chol': pre-computed Cholesky matrix (2x2)
             If any key is missing, that parameter will be estimated via priors.
 
@@ -684,7 +685,9 @@ def _(
                 pace_distance_effect = pm.Data('pace_distance_effect', fixed_params['pace_distance_effect'], dims='gender')  # 1=DNF, 0=finished
             else:
                 pace_distance_effect = pm.Normal('pace_distance_effect', mu=[beta_m, beta_f], sigma=sigma_pace_distance_effect, dims='gender')  # Compute log distance ratios for each unique course
-            if is_fixed_mode:
+            if is_fixed_mode and 'finish_time_noise' in fixed_params:
+                finish_time_noise = pm.Data('finish_time_noise', fixed_params['finish_time_noise'], dims='gender')
+            elif is_fixed_mode:
                 finish_time_noise = np.array([sigma_finish_time_noise, sigma_finish_time_noise])
             else:
                 finish_time_noise = pm.HalfNormal('finish_time_noise', sigma=sigma_finish_time_noise, dims='gender')
@@ -2006,7 +2009,7 @@ def _(np, sigma_finish_time_noise, trace):
     # Stds: [a, sqrt(b^2 + c^2)], Correlation: b / sqrt(a^2 * (b^2 + c^2))
     dnf_rate_marathon_fixed = trace.posterior['dnf_rate_marathon'].median(dim=['chain', 'draw']).values  # shape (n_genders,)
     dnf_distance_multiplier_fixed = float(trace.posterior['dnf_distance_multiplier'].median(dim=['chain', 'draw']).values)  # Finish time SD
-    finish_time_noise_fixed = np.array([sigma_finish_time_noise, sigma_finish_time_noise])  # DNF SD
+    finish_time_noise_fixed = trace.posterior['finish_time_noise'].median(dim=['chain', 'draw']).values  # DNF SD
     print('Fixed hyperparameters from k-core MCMC:')
     print('=' * 60)
     print(f'Finish Time Model:')
@@ -2020,7 +2023,6 @@ def _(np, sigma_finish_time_noise, trace):
     print(f'\nCorrelated Course Effects:')
     print(f'  course_effect_sds [finish, dnf]:         [{course_effect_sds_fixed[0]:.4f}, {course_effect_sds_fixed[1]:.4f}]')
     print(f'  course_correlation:                      {course_correlation_fixed:.4f}')
-    # Finish time noise is fixed in the model (not estimated)
     print('=' * 60)
     return (
         course_correlation_fixed,
@@ -2082,6 +2084,7 @@ def _(
     define_model,
     dnf_distance_multiplier_fixed,
     dnf_rate_marathon_fixed,
+    finish_time_noise_fixed,
     mo,
     np,
     pace_distance_effect_fixed,
@@ -2093,7 +2096,7 @@ def _(
     std_diag = np.diag(course_effect_sds_fixed)
     cov_matrix = std_diag @ corr_matrix @ std_diag
     chol_fixed_1 = np.linalg.cholesky(cov_matrix)
-    model_map = define_model(results_full, fixed_params={'pace_marathon': pace_marathon_fixed, 'pace_distance_effect': pace_distance_effect_fixed, 'dnf_rate_marathon': dnf_rate_marathon_fixed, 'dnf_distance_multiplier': dnf_distance_multiplier_fixed, 'chol': chol_fixed_1})
+    model_map = define_model(results_full, fixed_params={'pace_marathon': pace_marathon_fixed, 'pace_distance_effect': pace_distance_effect_fixed, 'finish_time_noise': finish_time_noise_fixed, 'dnf_rate_marathon': dnf_rate_marathon_fixed, 'dnf_distance_multiplier': dnf_distance_multiplier_fixed, 'chol': chol_fixed_1})
     _graph = pm.model_to_graphviz(model_map)
     mo.Html(
         f'<div style="max-width:100%; overflow-x:auto">{_graph.pipe(format="svg").decode()}</div>'
