@@ -119,11 +119,10 @@ def _(Path, os):
 
     reference_distance = 26.2  # Marathon
 
-    # K-core parameters for dev iteration.
-    # Cached traces at (3, 840) and (3, 423) tune=500 were fit with broken time units
-    # (observed_times /1000 instead of /60000). Bumping to tune=1000/draws=1000 forces
-    # a fresh fit with corrected units. (3, 840) keeps the dataset small (~11 courses,
-    # ~22K entities) so the fit completes in single-digit minutes for diagnostics.
+    # K-core parameters for dev iteration. (3, 840) keeps the dataset small
+    # (~11 courses, ~22K entities) so the fit completes in single-digit minutes
+    # for diagnostics — but is unidentifiable (r_hat ~4.5); use (3, 629) or
+    # looser for real inference.
     alpha = 3  # Minimum courses per k-core runner
     beta = 840  # Minimum runners per k-core course
 
@@ -1026,8 +1025,12 @@ def _(
         _log_distance_ratio = pm.math.log(race_distances_full / reference_distance_1)
         _expected_log_pace = _pace_marathon[gender_indices_full] + _pace_distance_effect[gender_indices_full] * _log_distance_ratio + _course_finish_time_multiplier[course_indices_full]
         _expected_pace = pm.Deterministic('expected_pace', pm.math.exp(_expected_log_pace), dims='finishers')
-        _expected_time = _expected_pace * race_distances_full
-        pm.Normal('finish_times', mu=_expected_time, sigma=_finish_time_noise[gender_indices_full] * race_distances_full, observed=observed_times_full, dims='finishers')
+        # Likelihood must match the MCMC model exactly: finish_time_noise is the
+        # posterior median of a log-scale sigma, so it is only valid inside a
+        # LogNormal — a Normal-on-minutes likelihood with sigma=noise*distance
+        # would be ~pace (≈10x) too tight and under-shrink closure courses.
+        _expected_log_time = _expected_log_pace + pm.math.log(race_distances_full)
+        pm.LogNormal('finish_times', mu=_expected_log_time, sigma=_finish_time_noise[gender_indices_full], observed=observed_times_full, dims='finishers')
     print('\nMAP Model Summary:')
     print('=' * 60)
     print(f'Total courses:        {n_courses_full:,}')
