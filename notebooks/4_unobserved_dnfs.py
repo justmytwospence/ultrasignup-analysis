@@ -729,7 +729,9 @@ def _(
 ):
     course_distances_m5 = np.array([model_data[model_data['course_id'] == cid]['distance_miles'].iloc[0] for cid in unique_courses_m5])
     n_results_per_course = np.array([len(model_data[model_data['course_id'] == cid]) for cid in unique_courses_m5])
-    coords_m5 = {'course': course_coords_m5, 'race': race_coords_m5, 'gender': unique_genders, 'finishers': range(n_finishers_m5), 'results': range(n_results_m5)}
+    reporting_results_mask_m5 = observed_dnf_count_per_course[course_indices_results_m5] > 0
+    _reporting_results_idx = np.flatnonzero(reporting_results_mask_m5)
+    coords_m5 = {'course': course_coords_m5, 'race': race_coords_m5, 'gender': unique_genders, 'finishers': range(n_finishers_m5), 'results': range(n_results_m5), 'reporting_results': range(len(_reporting_results_idx))}
     with pm.Model(coords=coords_m5) as model_m5:
         mu_pace = pm.Normal('mu_pace', mu=np.array([empirical_priors_m5[g]['log_marathon_pace'] for g in unique_genders]), sigma=np.array([empirical_priors_m5[g]['log_pace_sd'] for g in unique_genders]), dims='gender')
         beta_1 = pm.Normal('beta', mu=np.array([empirical_priors_m5[g]['beta'] for g in unique_genders]), sigma=0.05, dims='gender')
@@ -761,8 +763,13 @@ def _(
         logit_true_dnf = mu_logit_dnf + beta_dist_dnf * log_dist_ratios_results_m5 + beta_dist_dnf_quad * log_dist_ratios_results_m5 ** 2 + gamma_1 * race_difficulty[race_indices_results_m5]
         true_dnf_prob = pm.math.sigmoid(logit_true_dnf)
         observed_dnf_prob = pm.Deterministic('observed_dnf_prob', reporting_prob_results * true_dnf_prob, dims='results')
-        finish_prob = 1 - observed_dnf_prob
-        finish_likelihood = pm.Bernoulli('finish_likelihood', p=finish_prob, observed=did_finish_m5, dims='results')
+        # Zero-DNF courses are covered ONLY by the marginal mixture Potential above;
+        # including their results in the per-result Bernoulli too would count the same
+        # evidence twice (and treat the shared reporting indicator as independent
+        # across results). Courses with >=1 observed DNF must be reporters, so their
+        # results get the Bernoulli with true_dnf_prob directly.
+        finish_prob_reporting = 1 - true_dnf_prob[_reporting_results_idx]
+        finish_likelihood = pm.Bernoulli('finish_likelihood', p=finish_prob_reporting, observed=did_finish_m5[_reporting_results_idx], dims='reporting_results')
         logit_dnf_expected = mu_logit_dnf + beta_dist_dnf * log_dist_ratios_finishers_m5 + beta_dist_dnf_quad * log_dist_ratios_finishers_m5 ** 2
         expected_dnf_prob_finishers = pm.math.sigmoid(logit_dnf_expected)
         expected_finish_prob_finishers = 1 - expected_dnf_prob_finishers
@@ -771,11 +778,11 @@ def _(
         selection_weight = 1 / selection_prob
         pm.Potential('selection_correction', pm.math.log(selection_weight))
     print(f'✅ Model 5c defined with deterministic reporting probability + Bernoulli likelihood')
-    print(f'   Courses with DNFs: {n_courses_with_dnf:,} → psi = 1.0 (deterministic)')
-    print(f'   Courses with zero DNFs: {n_courses_zero_dnf:,} → psi inferred via Bernoulli(p=(1-p_dnf)^n)')
+    print(f'   Courses with DNFs: {n_courses_with_dnf:,} → reporting_prob = 1.0, results in Bernoulli ({len(_reporting_results_idx):,} results)')
+    print(f'   Courses with zero DNFs: {n_courses_zero_dnf:,} → marginal mixture Potential only (no per-result Bernoulli)')
     print(f'   Distance-specific DNF rates used for zero-DNF course likelihood')
     print(f'   Total parameters: {10} hyperparameters + {n_courses_m5:,} courses + {n_races_m5:,} races')
-    return model_m5, sigma_obs
+    return model_m5, reporting_results_mask_m5, sigma_obs
 
 
 @app.cell
@@ -887,6 +894,7 @@ def _(
     plt,
     prior_pred_m5,
     race_indices_results_m5,
+    reporting_results_mask_m5,
     results_1,
     standard_distances,
     unique_courses_m5,
@@ -895,12 +903,17 @@ def _(
     prior_finish_samples_m5 = prior_pred_m5.prior_predictive['finish_likelihood'].values
     prior_dnf_samples_m5 = 1 - prior_finish_samples_m5
     prior_dnf_flat_m5 = prior_dnf_samples_m5.reshape(-1, prior_dnf_samples_m5.shape[-1])
+    # finish_likelihood is defined over reporting-course results only; restrict the
+    # model-side index arrays to the same subset so columns line up.
+    _distances_results_rep = distances_results_m5[reporting_results_mask_m5]
+    _race_indices_results_rep = race_indices_results_m5[reporting_results_mask_m5]
+    _course_indices_results_rep = course_indices_results_m5[reporting_results_mask_m5]
     _fig, _axes = plt.subplots(2, 4, figsize=(16, 8))
     _axes = _axes.flatten()
     for _col_idx, (_name, _dist_value, _tolerance) in enumerate(standard_distances):
         _ax = _axes[_col_idx]
         _obs_mask_full = np.abs(results_1['distance_miles'] - _dist_value) < _tolerance
-        _obs_mask_model = np.abs(distances_results_m5 - _dist_value) < _tolerance
+        _obs_mask_model = np.abs(_distances_results_rep - _dist_value) < _tolerance
         if not _obs_mask_full.any():
             _ax.axis('off')
             _ax.set_title(f'{_name}\nNo data', fontsize=10)
@@ -916,7 +929,7 @@ def _(
             _dnf_rate = (~_race_data['finished']).mean()
             _obs_dnf_rates.append(_dnf_rate)
         _obs_dnf_rates = np.array(_obs_dnf_rates)
-        _race_indices_dist = race_indices_results_m5[_obs_mask_model]
+        _race_indices_dist = _race_indices_results_rep[_obs_mask_model]
         _unique_races_dist = np.unique(_race_indices_dist)
         prior_dnf_rates = []
         for _race_idx in _unique_races_dist:
@@ -948,7 +961,7 @@ def _(
     for _col_idx, (_name, _dist_value, _tolerance) in enumerate(standard_distances):
         _ax = _axes[_col_idx]
         _obs_mask_full = np.abs(results_1['distance_miles'] - _dist_value) < _tolerance
-        _obs_mask_model = np.abs(distances_results_m5 - _dist_value) < _tolerance
+        _obs_mask_model = np.abs(_distances_results_rep - _dist_value) < _tolerance
         if not _obs_mask_full.any():
             _ax.axis('off')
             _ax.set_title(f'{_name}\nNo data', fontsize=10)
@@ -964,7 +977,7 @@ def _(
             _dnf_rate = (~_course_data['finished']).mean()
             obs_dnf_rates_course.append(_dnf_rate)
         obs_dnf_rates_course = np.array(obs_dnf_rates_course)
-        course_indices_dist = course_indices_results_m5[_obs_mask_model]
+        course_indices_dist = _course_indices_results_rep[_obs_mask_model]
         unique_courses_dist = np.unique(course_indices_dist)
         prior_dnf_rates_course = []
         for _course_idx in unique_courses_dist:
@@ -1500,12 +1513,17 @@ def _(
     race_indices_results_m5,
     race_to_course_m5,
     random_draws,
+    reporting_results_mask_m5,
     results_1,
     standard_distances_1,
     trace_m5,
 ):
     post_pred_dnf_m5 = post_pred_m5.predictions['finish_likelihood'].values
     post_pred_dnf_flat_m5 = 1 - post_pred_dnf_m5.reshape(-1, post_pred_dnf_m5.shape[-1])
+    # finish_likelihood is defined over reporting-course results only; restrict the
+    # model-side index arrays to the same subset so columns line up.
+    _distances_results_rep = distances_results_m5[reporting_results_mask_m5]
+    _race_indices_results_rep = race_indices_results_m5[reporting_results_mask_m5]
     psi_course_samples = trace_m5.posterior['psi_course'].isel(draw=random_draws).values
     psi_course_flat = psi_course_samples.reshape(-1, psi_course_samples.shape[-1])
     _fig, _axes = plt.subplots(2, 4, figsize=(16, 8))
@@ -1513,7 +1531,7 @@ def _(
     for _col_idx, (_name, _dist_value, _tolerance) in enumerate(standard_distances_1):
         _ax = _axes[_col_idx]
         _obs_mask_full = np.abs(results_1['distance_miles'] - _dist_value) < _tolerance
-        _obs_mask_model = np.abs(distances_results_m5 - _dist_value) < _tolerance
+        _obs_mask_model = np.abs(_distances_results_rep - _dist_value) < _tolerance
         if not _obs_mask_full.any():
             _ax.axis('off')
             _ax.set_title(f'{_name}\nNo data', fontsize=10)
@@ -1526,7 +1544,7 @@ def _(
             _dnf_rate = (~_race_data['finished']).mean()
             _obs_dnf_rates.append(_dnf_rate)
         _obs_dnf_rates = np.array(_obs_dnf_rates)
-        _race_indices_dist = race_indices_results_m5[_obs_mask_model]
+        _race_indices_dist = _race_indices_results_rep[_obs_mask_model]
         _unique_races_dist = np.unique(_race_indices_dist)
         post_dnf_rates = []
         for _race_idx in _unique_races_dist:
