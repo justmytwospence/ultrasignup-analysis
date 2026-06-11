@@ -67,6 +67,7 @@ def _():
     # PyMC and ArviZ for Bayesian modeling
     import arviz as az
     import pymc as pm
+    import pytensor.tensor as pt
 
     # Visualization libraries
     import matplotlib.pyplot as plt
@@ -82,7 +83,7 @@ def _():
     )
 
 
-    return az, betaln, load_results, np, os, pd, plt, pm, process_results
+    return az, betaln, load_results, np, os, pd, plt, pm, process_results, pt
 
 
 @app.cell
@@ -167,7 +168,7 @@ def _(mo):
 
 
 @app.cell
-def _(pm, race_stats):
+def _(pm, pt, race_stats):
     # SIMPLER APPROACH: Learn μ, β, κ from clean data, compute p_reports as derived quantity
     # Much faster than mixture model with 30K+ latent variables!
     _reporting_races = race_stats[race_stats['has_dnf'] == 1].copy()
@@ -185,6 +186,14 @@ def _(pm, race_stats):
         _alpha = expected_p_dnf * kappa  # logit(p_dnf) = μ + β × (distance - 50km)
         beta = (1 - expected_p_dnf) * kappa  # WEAKLY INFORMATIVE PRIORS: Allow data to dominate while staying in valid ranges
         observed_dnf = pm.BetaBinomial('observed_dnf', alpha=_alpha, beta=beta, n=_reporting_races['n_attempts'].values, observed=_reporting_races['n_dnf'].values, dims='reporting_race')  # Weak prior on intercept
+        # Zero-truncation correction: training data conditions on n_dnf >= 1, but a
+        # reporting race can have zero DNFs by chance (short races, small fields).
+        # Without truncating the likelihood, mu_logit_dnf is biased upward.
+        # P(Y=0 | BetaBinom) = B(alpha, beta+n)/B(alpha, beta); with alpha+beta = kappa
+        # the log simplifies to the expression below.
+        _n_attempts = _reporting_races['n_attempts'].values
+        _log_p_zero = pt.gammaln(beta + _n_attempts) - pt.gammaln(kappa + _n_attempts) - pt.gammaln(beta) + pt.gammaln(kappa)
+        pm.Potential('zero_truncation', -pm.math.log1mexp(_log_p_zero).sum())
     pm.model_to_graphviz(reporting_model)  # Weak prior on slope  # Controls overdispersion  # Expected DNF rate for reporting races  # Beta-binomial parameters  # Likelihood: Observed DNF counts (ONLY races with DNFs - clean training data)
     return reference_distance, reporting_model
 
