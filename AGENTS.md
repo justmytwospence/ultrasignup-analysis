@@ -12,6 +12,8 @@ a complete DuckDB mirror of UltraSignup and serves it read-only over DuckDB's Qu
   `connect(local=True)` opens `data/mirror.duckdb`, the copy `pull()` makes for offline work,
   pinned long fits, RunPod and the duckdb MCP. Settings: `ULTRASIGNUP_QUACK_URI` and
   `ULTRASIGNUP_QUACK_TOKEN` in a gitignored `.env` (see `.env.example`).
+  `ULTRASIGNUP_SOURCE=local` makes plain `connect()` (and so every notebook) read the pull;
+  use it for refits, since the k-core and trace caches are keyed by parameters, not data.
 - Read only the mirror's analyst schema `main` (`races`, `results`, `runners`, `courses`,
   `entrants`, `relay_results`, `about`), documented with ERDs in the mirror's `docs/schema.md`.
   Never its `sync` schema. `check_schema` refuses a mirror whose schema major differs from

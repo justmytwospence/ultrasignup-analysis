@@ -13,6 +13,9 @@ NUC), and for the duckdb MCP server in .mcp.json.
 Configuration comes from the environment (or a gitignored .env at the repo root):
     ULTRASIGNUP_QUACK_URI    e.g. quack:ultrasignup.example.com:443
     ULTRASIGNUP_QUACK_TOKEN  the mirror's read-only Quack token
+    ULTRASIGNUP_SOURCE       live (default) or local: what connect() opens when `local` is
+                             not given. Set local to pin notebooks and their caches (keyed
+                             by parameters, not data) to one pull.
 """
 
 from __future__ import annotations
@@ -89,13 +92,24 @@ def check_schema(con: duckdb.DuckDBPyConnection, catalog: str | None = None) -> 
     return text
 
 
-def connect(*, local: bool = False, path: Path | str | None = None) -> duckdb.DuckDBPyConnection:
+def _default_local() -> bool:
+    _load_env()
+    source = os.environ.get("ULTRASIGNUP_SOURCE", "live").strip().lower() or "live"
+    if source not in ("live", "local"):
+        raise MirrorConfigError(f"ULTRASIGNUP_SOURCE must be live or local, not {source!r}")
+    return source == "local"
+
+
+def connect(*, local: bool | None = None, path: Path | str | None = None) -> duckdb.DuckDBPyConnection:
     """Open the mirror's analyst schema.
 
-    live (default): attach the mirror over Quack and CONNECT to it, so plain SQL such as
+    local=None (default) follows ULTRASIGNUP_SOURCE (live unless set to local).
+    live: attach the mirror over Quack and CONNECT to it, so plain SQL such as
     `SELECT * FROM results` runs on the NUC.
     local=True: open the pulled copy (data/mirror.duckdb, or `path`) read-only.
     """
+    if local is None:
+        local = _default_local()
     if local:
         target = Path(path) if path else LOCAL_PATH
         if not target.exists():

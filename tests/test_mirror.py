@@ -41,8 +41,20 @@ def test_missing_config(monkeypatch):
     monkeypatch.setattr(mirror, "_load_env", lambda: None)
     monkeypatch.delenv("ULTRASIGNUP_QUACK_URI", raising=False)
     monkeypatch.delenv("ULTRASIGNUP_QUACK_TOKEN", raising=False)
+    monkeypatch.delenv("ULTRASIGNUP_SOURCE", raising=False)
     with pytest.raises(mirror.MirrorConfigError):
         mirror.connect()
+
+
+def test_source_env_selects_local(monkeypatch, mirror_file):
+    monkeypatch.setattr(mirror, "_load_env", lambda: None)
+    monkeypatch.setenv("ULTRASIGNUP_SOURCE", "local")
+    con = mirror.connect(path=mirror_file)
+    assert con.execute("SELECT count(*) FROM results").fetchone()[0] > 0
+    con.close()
+    monkeypatch.setenv("ULTRASIGNUP_SOURCE", "nuc")
+    with pytest.raises(mirror.MirrorConfigError):
+        mirror.connect(path=mirror_file)
 
 
 @pytest.mark.live
