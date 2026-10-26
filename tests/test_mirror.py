@@ -64,5 +64,9 @@ def test_live_mirror_contract():
     columns = {r[0] for r in con.execute("DESCRIBE results").fetchall()}
     assert set(RESULT_COLUMNS) <= columns
     sample = con.execute(f"SELECT {', '.join(RESULT_COLUMNS)} FROM results USING SAMPLE 2000").df()
+    statuses = {r[0] for r in con.execute("SELECT DISTINCT status FROM results").fetchall()}
+    formats = {r[0] for r in con.execute("SELECT DISTINCT race_format FROM races").fetchall()}
     con.close()
+    assert statuses <= {"finished", "finished_small_field", "unofficial", "dnf", "dns", "dq", None}
+    assert formats <= {"distance", "fixed_time", "relay", None}
     assert len(process_results(sample)) > 0

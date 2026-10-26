@@ -1,7 +1,7 @@
 """Access to the UltraSignup mirror (https://github.com/justmytwospence/ultrasignup-mirror).
 
 The mirror runs on the NUC and serves its analyst schema (`main`: races, results, runners,
-courses, entrants, relay_results, about) read-only over DuckDB's Quack protocol. Two ways in:
+courses, events, relay_results, about; more as the mirror adds them) read-only over DuckDB's Quack protocol. Two ways in:
 
     con = connect()             # live: queries execute on the NUC, results stream back
     con = connect(local=True)   # the local copy in data/mirror.duckdb, made by pull()
@@ -32,7 +32,9 @@ LOCAL_PATH = REPO_ROOT / "data" / "mirror.duckdb"
 # major on breaking changes to `main` and records it in main.about.schema_version.
 EXPECTED_SCHEMA_MAJOR = 1
 
-TABLES = ("about", "courses", "races", "results", "relay_results", "runners", "entrants")
+# The tables this repo relies on; pull() copies every table in the mirror's `main`, so tables
+# the mirror adds later (entrants, histories) come along without a code change.
+TABLES = ("about", "courses", "events", "races", "results", "relay_results", "runners")
 
 # Storage format of the local copy: readable by DuckDB 1.5+ (the duckdb MCP, older images).
 LOCAL_STORAGE_VERSION = "v1.5.0"
@@ -124,8 +126,9 @@ def connect(*, local: bool | None = None, path: Path | str | None = None) -> duc
     return con
 
 
-def pull(tables: tuple[str, ...] = TABLES, *, dest: Path | str | None = None, source: duckdb.DuckDBPyConnection | None = None, source_catalog: str = "mirror") -> Path:
-    """Copy the analyst tables into a local DuckDB file and return its path.
+def pull(tables: tuple[str, ...] | None = None, *, dest: Path | str | None = None, source: duckdb.DuckDBPyConnection | None = None, source_catalog: str = "mirror") -> Path:
+    """Copy the analyst tables (default: every table in the mirror's `main`) into a local
+    DuckDB file and return its path.
 
     The copy is written to a temporary file and moved into place, so a reader never sees a
     half-written file. `source` is for tests: a connection that already has the mirror
@@ -142,6 +145,14 @@ def pull(tables: tuple[str, ...] = TABLES, *, dest: Path | str | None = None, so
         if source is None:
             _attach_remote(con, source_catalog)
         check_schema(con, source_catalog)
+        if tables is None:
+            tables = tuple(r[0] for r in con.execute(
+                f"SELECT table_name FROM information_schema.tables WHERE table_catalog = {_quote(source_catalog)} "
+                "AND table_schema = 'main' AND table_type = 'BASE TABLE' ORDER BY table_name"
+            ).fetchall())
+            missing = set(TABLES) - set(tables)
+            if missing:
+                raise SchemaMismatch(f"Mirror is missing tables {sorted(missing)}")
         con.execute(f"ATTACH {_quote(str(tmp))} AS pulled (STORAGE_VERSION '{LOCAL_STORAGE_VERSION}')")
         try:
             for table in tables:
