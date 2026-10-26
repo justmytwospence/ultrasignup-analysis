@@ -21,8 +21,8 @@ on the 2025 scrape.
 - **Course identity** is the mirror's `course_id` (series + distance, stable across years and
   renames). `process_results` sets `name = course_id`, so nb 1 and nb 3, which key courses by
   `name`, are already id-based. Once refit, simplify nb 3/4's own `name||distance` keys to
-  `course_id` [UltraSignup-7yu]. `course_id` is NULL until the mirror knows a race's series;
-  `process_results` drops those rows, so check how many it loses on the first pull.
+  `course_id` [UltraSignup-7yu]. `course_id` is NULL only until the backfill fetches a race's
+  series; `process_results` drops such rows as a safety net.
 - **Distances and formats are inferred by the mirror** from labels (`races.distance_km`,
   `race_format`, `fixed_time_unit`); `distance_label` and the page's `distance_type` sit
   alongside. Spot-check races with a NULL `distance_km` or a format that disagrees with
@@ -43,8 +43,8 @@ on the 2025 scrape.
 - **Experience.** `results.runner_nth_race` (1 = debut) is a point-in-time covariate that does
   not leak the future, unlike the old `runner_rank` (the runner's *current* rank).
 
-Planned in a later mirror phase, not served yet (`main` has no `entrants` table, no
-`race_score`, and `source` is only `results_api`):
+Coming with the mirror's Phase 4 backfill (histories, entrants); `pull()` copies the new
+tables automatically:
 
 - **DNS-aware modeling** from entrant rosters (registered field per race), for nb 2 and nb 4.
 - **Point-in-time runner strength** from per-race scores in runner histories.

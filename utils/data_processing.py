@@ -37,8 +37,8 @@ KM_PER_MILE = 1.609344
 FINISHED_STATUSES = ("finished", "finished_small_field", "unofficial")
 DNF_STATUSES = ("dnf",)
 
-# The mirror serves only the public results today. Hidden results ("participant_history")
-# are planned for a later mirror phase; nothing from the 2025 scrape is imported.
+# Public results. Hidden results ("participant_history") arrive with the mirror's Phase 4
+# backfill (histories) and are opt-in; nothing from the 2025 scrape is imported.
 DEFAULT_SOURCES = ("results_api",)
 
 RESULT_COLUMNS = (
@@ -119,8 +119,8 @@ def process_results(results: pd.DataFrame) -> pd.DataFrame:
     3. Keep starts that ended in a finish or a DNF (dns and dq are dropped).
     4. Compute pace and drop finishers faster than 5 min/mile (data errors).
     """
-    # course_id is NULL until the mirror knows the race's series; such races have no
-    # course identity to pool on, so they are dropped.
+    # course_id is NULL until the mirror has fetched the race's series (mid-backfill); such
+    # races have no course identity to pool on yet, so they are dropped.
     results = results[results['gender'].isin(['M', 'F']) & results['age'].notna() & results['course_id'].notna()].copy()
     results = results[results['race_name'].map(is_running_race)]
     results = results[results['race_format'] == 'distance']

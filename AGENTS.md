@@ -20,9 +20,9 @@ a complete DuckDB mirror of UltraSignup and serves it read-only over DuckDB's Qu
   `EXPECTED_SCHEMA_MAJOR`; on a bump, update `utils/` and the tests, then the constant.
 - `utils/data_processing.py`: `load_results()` reads `main.results`; `process_results()` builds
   the model frame every notebook uses (column contract in its docstring). Starts are finish or
-  DNF; `dns` and `dq` are dropped, as are races with a NULL `course_id` (series not yet known).
-  The mirror serves only `source = 'results_api'` for now: no hidden results, and nothing from
-  the 2025 scrape (races retracted since then have no results).
+  DNF; `dns` and `dq` are dropped, as are races with a NULL `course_id` (series not fetched
+  yet, mid-backfill). Hidden results (`participant_history`, from the mirror's Phase 4) are
+  opt-in. Nothing from the 2025 scrape is imported.
 - DuckDB is pinned to 2.0 (the mirror's version, required by Quack).
 - `data/` is gitignored: `mirror.duckdb`, `cache/` (k-core subsets and traces) and `legacy/`
   (the 2025 scrape and old checkouts, kept until the refits on mirror data are done).
