@@ -1,17 +1,11 @@
-# Analysis environment for UltraSignup race data
-# Install with: pip install -e .
-
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "ultrasignup-analysis"
 version = "0.1.0"
-description = "Statistical analysis and modeling for UltraSignup race data"
+description = "Bayesian models of ultramarathon finish times and DNFs, over the UltraSignup mirror"
 requires-python = ">=3.11"
 dependencies = [
-    "duckdb>=1.0.0",
+    "duckdb==2.0.*",
+    "python-dotenv>=1.0",
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "pymc>=5.6.1",
@@ -34,13 +28,34 @@ dependencies = [
     "tqdm>=4.66.0",
     "blackjax>=1.3",
     "igraph>=1.0.0",
-    "marimo>=0.25.0",
-    "marimo-lens>=0.2.3",
+    "marimo>=0.25.1",
+    "marimo-lens>=0.2.4",
     "nutpie>=0.16.8",
 ]
 
-[tool.setuptools.packages.find]
-include = ["utils*"]
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["utils"]
+
+[tool.uv]
+# Release cooldown: resolve only releases at least a week old. duckdb 2.0.0 (2026-10-21) is
+# taken early on purpose: the mirror writes DuckDB 2.0 storage and Quack needs the same
+# version on both ends. Remove the entry once it is past the cooldown.
+exclude-newer = "7 days"
+
+[tool.uv.exclude-newer-package]
+duckdb = "2026-10-21T13:00:00Z"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: needs the real mirror (ULTRASIGNUP_QUACK_URI and ULTRASIGNUP_QUACK_TOKEN)"]
+addopts = "-m 'not live'"
 
 [tool.marimo.runtime]
 # 0_kcore.py's 3D wireframe carries 9 toggle states (3 z-axes × 3 colors)

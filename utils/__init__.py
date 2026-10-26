@@ -10,7 +10,6 @@ from utils.data_processing import (
     process_results,
     filter_races_with_dnfs,
     is_running_race,
-    extract_distance_miles,
 )
 
 from utils.data_subsetting import *
@@ -46,7 +45,6 @@ __all__ = [
     "process_results",
     "filter_races_with_dnfs",
     "is_running_race",
-    "extract_distance_miles",
     # empirical_priors
     "calculate_gender_marathon_pace",
     "calculate_gender_distance_exponent",

@@ -1,0 +1,78 @@
+"""A tiny stand-in for the mirror's analyst schema (`main`), built as a local DuckDB file.
+
+Only the columns this repo reads are modeled; the real schema is documented in the
+mirror's docs/schema.md.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import duckdb
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+SCHEMA = """
+CREATE TABLE about (schema_version VARCHAR, snapshot_at TIMESTAMP);
+CREATE TABLE courses (course_id VARCHAR, series_name VARCHAR, distance_km DOUBLE);
+CREATE TABLE races (did INTEGER, course_id VARCHAR, race_name VARCHAR, race_date DATE, distance_km DOUBLE, race_format VARCHAR);
+CREATE TABLE runners (runner_id INTEGER, first_name VARCHAR, last_name VARCHAR);
+CREATE TABLE entrants (did INTEGER, runner_id INTEGER, captured_at TIMESTAMP);
+CREATE TABLE relay_results (did INTEGER, team_name VARCHAR);
+CREATE TABLE results (
+    did INTEGER, runner_id INTEGER, course_id VARCHAR, race_name VARCHAR, race_date DATE,
+    year INTEGER, distance_km DOUBLE, race_format VARCHAR, gender VARCHAR, age INTEGER,
+    status VARCHAR, finish_time_s DOUBLE, source VARCHAR
+);
+"""
+
+# (did, runner_id, course_id, race_name, distance_km, race_format, gender, age, status, finish_time_s, source)
+RESULTS = [
+    # A 50K with every status
+    (1, 10, "100-50k", "Canyon Run - 50K", 50.0, "distance", "M", 30, "finished", 5 * 3600, "results_api"),
+    (1, 11, "100-50k", "Canyon Run - 50K", 50.0, "distance", "F", 41, "finished_small_field", 6 * 3600, "results_api"),
+    (1, 12, "100-50k", "Canyon Run - 50K", 50.0, "distance", "M", 25, "unofficial", 7 * 3600, "results_api"),
+    (1, 13, "100-50k", "Canyon Run - 50K", 50.0, "distance", "F", 35, "dnf", None, "results_api"),
+    (1, 14, "100-50k", "Canyon Run - 50K", 50.0, "distance", "M", 50, "dns", None, "results_api"),
+    (1, 15, "100-50k", "Canyon Run - 50K", 50.0, "distance", "M", 28, "dq", 4 * 3600, "results_api"),
+    # Filtered out: unknown age, gender X, implausibly fast pace
+    (1, 16, "100-50k", "Canyon Run - 50K", 50.0, "distance", "M", None, "finished", 5 * 3600, "results_api"),
+    (1, 17, "100-50k", "Canyon Run - 50K", 50.0, "distance", "X", 33, "finished", 5 * 3600, "results_api"),
+    (1, 18, "100-50k", "Canyon Run - 50K", 50.0, "distance", "M", 22, "finished", 3600, "results_api"),
+    # A 100-miler with no DNFs, from a retracted race kept in the 2025 scrape
+    (2, 10, "200-100mi", "Mountain 100 - 100 Miler", 160.934, "distance", "M", 30, "finished", 24 * 3600, "legacy_2025"),
+    (2, 11, "200-100mi", "Mountain 100 - 100 Miler", 160.934, "distance", "F", 41, "finished", 28 * 3600, "legacy_2025"),
+    # Dropped by format, sport and distance
+    (3, 10, "300-24h", "Loop Day - 24 Hour", None, "fixed_time", "M", 30, "finished", 86400, "results_api"),
+    (4, 10, "400-100k", "Gravel Grinder - 100K Ride", 100.0, "distance", "M", 30, "finished", 4 * 3600, "results_api"),
+    (5, 10, "500-5k", "Fun Run - 5K", 5.0, "distance", "M", 30, "finished", 1500, "results_api"),
+    # Hidden: only in a runner's history, opt-in
+    (6, 10, "600-50k", "Hidden Trail - 50K", 50.0, "distance", "M", 30, "finished", 5 * 3600, "participant_history"),
+]
+
+
+def build_mirror(path: Path, schema_version: str = "1.0") -> Path:
+    con = duckdb.connect(str(path))
+    con.execute(SCHEMA)
+    con.execute("INSERT INTO about VALUES (?, now())", [schema_version])
+    con.executemany(
+        "INSERT INTO results VALUES (?, ?, ?, ?, DATE '2025-06-01', 2025, ?, ?, ?, ?, ?, ?, ?)",
+        RESULTS,
+    )
+    con.execute("INSERT INTO races SELECT DISTINCT did, course_id, race_name, race_date, distance_km, race_format FROM results")
+    con.close()
+    return path
+
+
+@pytest.fixture
+def mirror_file(tmp_path: Path) -> Path:
+    return build_mirror(tmp_path / "mirror.duckdb")
+
+
+@pytest.fixture
+def mirror_con(mirror_file: Path):
+    con = duckdb.connect(str(mirror_file), read_only=True)
+    yield con
+    con.close()
