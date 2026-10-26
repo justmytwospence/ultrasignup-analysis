@@ -19,7 +19,7 @@ CREATE TABLE about (schema_version VARCHAR, snapshot_at TIMESTAMP);
 CREATE TABLE courses (course_id VARCHAR, series_name VARCHAR, distance_km DOUBLE);
 CREATE TABLE races (did INTEGER, course_id VARCHAR, race_name VARCHAR, race_date DATE, distance_km DOUBLE, race_format VARCHAR);
 CREATE TABLE runners (runner_id INTEGER, first_name VARCHAR, last_name VARCHAR);
-CREATE TABLE entrants (did INTEGER, runner_id INTEGER, captured_at TIMESTAMP);
+CREATE TABLE events (event_id INTEGER, series_id INTEGER, event_name VARCHAR);
 CREATE TABLE relay_results (did INTEGER, team_name VARCHAR);
 CREATE TABLE results (
     did INTEGER, runner_id INTEGER, course_id VARCHAR, race_name VARCHAR, race_date DATE,
@@ -41,14 +41,16 @@ RESULTS = [
     (1, 16, "100-50k", "Canyon Run - 50K", 50.0, "distance", "M", None, "finished", 5 * 3600, "results_api"),
     (1, 17, "100-50k", "Canyon Run - 50K", 50.0, "distance", "X", 33, "finished", 5 * 3600, "results_api"),
     (1, 18, "100-50k", "Canyon Run - 50K", 50.0, "distance", "M", 22, "finished", 3600, "results_api"),
-    # A 100-miler with no DNFs, from a retracted race kept in the 2025 scrape
-    (2, 10, "200-100mi", "Mountain 100 - 100 Miler", 160.934, "distance", "M", 30, "finished", 24 * 3600, "legacy_2025"),
-    (2, 11, "200-100mi", "Mountain 100 - 100 Miler", 160.934, "distance", "F", 41, "finished", 28 * 3600, "legacy_2025"),
+    # A 100-miler with no DNFs
+    (2, 10, "200-100mi", "Mountain 100 - 100 Miler", 160.934, "distance", "M", 30, "finished", 24 * 3600, "results_api"),
+    (2, 11, "200-100mi", "Mountain 100 - 100 Miler", 160.934, "distance", "F", 41, "finished", 28 * 3600, "results_api"),
     # Dropped by format, sport and distance
     (3, 10, "300-24h", "Loop Day - 24 Hour", None, "fixed_time", "M", 30, "finished", 86400, "results_api"),
     (4, 10, "400-100k", "Gravel Grinder - 100K Ride", 100.0, "distance", "M", 30, "finished", 4 * 3600, "results_api"),
     (5, 10, "500-5k", "Fun Run - 5K", 5.0, "distance", "M", 30, "finished", 1500, "results_api"),
-    # Hidden: only in a runner's history, opt-in
+    # No course identity yet (series unknown): dropped
+    (7, 10, None, "Mystery Run - 50K", 50.0, "distance", "M", 30, "finished", 5 * 3600, "results_api"),
+    # Hidden: only in a runner's history, opt-in (a later mirror phase)
     (6, 10, "600-50k", "Hidden Trail - 50K", 50.0, "distance", "M", 30, "finished", 5 * 3600, "participant_history"),
 ]
 

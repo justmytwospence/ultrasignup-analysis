@@ -11,8 +11,8 @@ MODEL_FRAME_COLUMNS = {
 
 def test_load_results_sources(mirror_con):
     default = load_results(mirror_con)
-    assert set(default["source"]) == {"results_api", "legacy_2025"}
-    with_hidden = load_results(mirror_con, sources=("results_api", "legacy_2025", "participant_history"))
+    assert set(default["source"]) == {"results_api"}
+    with_hidden = load_results(mirror_con, sources=("results_api", "participant_history"))
     assert len(with_hidden) == len(default) + 1
 
 
@@ -33,7 +33,7 @@ def test_status_mapping_and_filters(mirror_con):
     assert pd.isna(race1.loc["13", "time_ms"])
     # dns, dq, unknown age, gender X and the 1-hour 50K are gone
     assert set(race1.index) == {"10", "11", "12", "13"}
-    # fixed-time, bike and 5K races are gone; the legacy 100-miler stays
+    # fixed-time, bike, 5K and course-less races are gone; the 100-miler stays
     assert set(frame["event_distance_id"]) == {1, 2}
 
 

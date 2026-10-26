@@ -37,7 +37,9 @@ KM_PER_MILE = 1.609344
 FINISHED_STATUSES = ("finished", "finished_small_field", "unofficial")
 DNF_STATUSES = ("dnf",)
 
-DEFAULT_SOURCES = ("results_api", "legacy_2025")
+# The mirror serves only the public results today. Hidden results ("participant_history")
+# are planned for a later mirror phase; nothing from the 2025 scrape is imported.
+DEFAULT_SOURCES = ("results_api",)
 
 RESULT_COLUMNS = (
     "did",
@@ -65,10 +67,9 @@ def load_results(con: duckdb.DuckDBPyConnection | None = None, sources: Sequence
     con : DuckDB connection, optional
         A connection from utils.mirror.connect(). Defaults to a live connection.
     sources : sequence of str
-        Which result sources to include. Default: the public results API plus the rows
-        preserved from the 2025 scrape for races since retracted. Add
-        "participant_history" for results only visible on runners' pages (those races are
-        usually incomplete, so they are opt-in).
+        Which result sources to include. Default: the public results API, the only source the
+        mirror serves so far. Once it adds "participant_history" (results only visible on
+        runners' pages, usually incomplete), include it explicitly.
     """
     own = con is None
     con = con or mirror.connect()
@@ -118,7 +119,9 @@ def process_results(results: pd.DataFrame) -> pd.DataFrame:
     3. Keep starts that ended in a finish or a DNF (dns and dq are dropped).
     4. Compute pace and drop finishers faster than 5 min/mile (data errors).
     """
-    results = results[results['gender'].isin(['M', 'F']) & results['age'].notna()].copy()
+    # course_id is NULL until the mirror knows the race's series; such races have no
+    # course identity to pool on, so they are dropped.
+    results = results[results['gender'].isin(['M', 'F']) & results['age'].notna() & results['course_id'].notna()].copy()
     results = results[results['race_name'].map(is_running_race)]
     results = results[results['race_format'] == 'distance']
     results = results[results['status'].isin(FINISHED_STATUSES + DNF_STATUSES)]
