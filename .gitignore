@@ -1,7 +1,31 @@
-
-# Nested subrepos (each has its own .git; commit inside them, not from root)
-scraper/
-analysis/
-
-# Local data and shared caches (managed independently of git)
+# Local data: mirror pulls, model caches, legacy scraped DBs
 data/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Jupyter / marimo
+.ipynb_checkpoints/
+__marimo__/
+
+# PyMC / ArviZ traces
+*.netcdf
+*.nc
+traces/
+
+# Editors and OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Worktrees
+.worktrees/
