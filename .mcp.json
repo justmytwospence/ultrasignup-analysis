@@ -5,7 +5,7 @@
       "args": [
         "mcp-server-duckdb",
         "--db-path",
-        "/Users/spencerboucher/Projects/UltraSignup/analysis/data/ultrasignup.duckdb",
+        "/Users/spencerboucher/Projects/UltraSignup/data/mirror.duckdb",
         "--readonly"
       ]
     }
