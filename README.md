@@ -29,7 +29,7 @@ mirror.pull()                             # copy the analyst tables to data/mirr
 con = mirror.connect(local=True)          # offline, or to pin a long fit to one snapshot
 ```
 
-The tables (`races`, `results`, `runners`, `courses`, `entrants`, `relay_results`, `about`) are
+The tables (`races`, `results`, `runners`, `courses`, `events`, `relay_results`, `about`) are
 documented with ERDs in the mirror's `docs/schema.md`.
 
 ## Notebooks

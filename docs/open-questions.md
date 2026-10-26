@@ -21,22 +21,35 @@ on the 2025 scrape.
 - **Course identity** is the mirror's `course_id` (series + distance, stable across years and
   renames). `process_results` sets `name = course_id`, so nb 1 and nb 3, which key courses by
   `name`, are already id-based. Once refit, simplify nb 3/4's own `name||distance` keys to
-  `course_id` [UltraSignup-7yu].
-- **Delete `data/legacy/`** (old DBs, caches, traces, the old checkouts) once the mirror's
-  `import-legacy` is verified and the refits are done.
+  `course_id` [UltraSignup-7yu]. `course_id` is NULL until the mirror knows a race's series;
+  `process_results` drops those rows, so check how many it loses on the first pull.
+- **Distances and formats are inferred by the mirror** from labels (`races.distance_km`,
+  `race_format`, `fixed_time_unit`); `distance_label` and the page's `distance_type` sit
+  alongside. Spot-check races with a NULL `distance_km` or a format that disagrees with
+  `distance_type` before trusting the k-core.
+- **Races retracted since 2025 have no results.** The mirror imports nothing from the 2025
+  scrape, so `data/legacy/ultrasignup.duckdb` is the only copy of those rows. Count what the
+  refits lose (the mirror's `scripts/validate.py` lists them) before deleting `data/legacy/`.
+- **Delete `data/legacy/`** (old DBs, caches, traces, the old checkouts) once the refits are done
+  and the retracted-race loss above is judged acceptable.
 
 ## New data the mirror makes possible
 
-- **DNS-aware modeling.** `races.n_entrants_final` (race-eve roster) and
-  `races.n_registered_not_listed` give the registered field even where race directors do not
-  post DNS/DNF rows. This bears directly on the reporting model (nb 2) and unobserved DNFs (nb 4).
-- **Point-in-time runner strength.** `results.race_score` is UltraSignup's per-race score at the
-  time; the old `runner_rank` was the runner's *current* rank (leaks the future). Use it, or a
-  runner effect, instead.
-- **Hidden results** (`source = 'participant_history'`) add races whose results pages are not
+- **DNF reporting is explicit.** `races.reports_dnfs` is false when a race posted no DNF or DNS
+  rows (then `n_dnf`, `n_dns` and `dnf_rate` are NULL, not 0). Use it in the reporting model
+  (nb 2) and in place of `filter_races_with_dnfs`'s course-level heuristic where it fits.
+- **Reporting-model covariates** [UltraSignup-ieg]: series (`series_id`), organizer and field size
+  are now available directly from `races`/`courses`/`events`.
+- **Experience.** `results.runner_nth_race` (1 = debut) is a point-in-time covariate that does
+  not leak the future, unlike the old `runner_rank` (the runner's *current* rank).
+
+Planned in a later mirror phase, not served yet (`main` has no `entrants` table, no
+`race_score`, and `source` is only `results_api`):
+
+- **DNS-aware modeling** from entrant rosters (registered field per race), for nb 2 and nb 4.
+- **Point-in-time runner strength** from per-race scores in runner histories.
+- **Hidden results** (`source = 'participant_history'`): races whose results pages are not
   public. Their fields are incomplete; decide per model whether to include them.
-- **Reporting-model covariates** [UltraSignup-ieg]: series (`eid`), organizer and field size
-  are now available directly from `races`/`courses`.
 
 ## nb 1: finish times
 
