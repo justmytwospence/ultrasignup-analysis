@@ -22,9 +22,6 @@ on the 2025 scrape.
   renames). `process_results` sets `name = course_id`, so nb 1 and nb 3, which key courses by
   `name`, are already id-based. Once refit, simplify nb 3/4's own `name||distance` keys to
   `course_id` [UltraSignup-7yu].
-- **`is_running_race` keyword filter** matches substrings (`ski` in "Whiskey", `ride` in
-  "Pride"). Check how many races it wrongly drops on mirror data and switch to word
-  boundaries if it matters.
 - **Delete `data/legacy/`** (old DBs, caches, traces, the old checkouts) once the mirror's
   `import-legacy` is verified and the refits are done.
 
