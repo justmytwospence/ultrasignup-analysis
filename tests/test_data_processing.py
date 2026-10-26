@@ -49,3 +49,12 @@ def test_filter_races_with_dnfs(mirror_con):
     frame = process_results(load_results(mirror_con))
     kept = filter_races_with_dnfs(frame)
     assert set(kept["name"]) == {"100-50k"}
+
+
+def test_is_running_race_whole_words():
+    from utils.data_processing import is_running_race
+
+    for name in ["Whiskey Basin 50K", "Pride Run", "Skyline 50K", "Bridger Ridge Run", "Swiss Alps 100"]:
+        assert is_running_race(name), name
+    for name in ["Gravel Grinder", "Mountain Bike Race", "Ski Mountaineering", "Snowshoe Shuffle", "Trail Riders 50", "Hiking Challenge"]:
+        assert not is_running_race(name), name

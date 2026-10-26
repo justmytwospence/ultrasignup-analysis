@@ -24,6 +24,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+import re
+
 import duckdb
 import pandas as pd
 
@@ -90,16 +92,19 @@ def is_running_race(name: str) -> bool:
     if pd.isna(name):
         return False
 
-    name_lower = str(name).lower()
+    return _NON_RUNNING.search(str(name)) is None
 
-    non_running_keywords = [
-        'bike', 'bicycle', 'cycling', 'duathlon', 'triathlon', 'swim',
-        'swimming', 'paddle', 'kayak', 'canoe', 'ski', 'snowshoe', 'hike',
-        'walk', 'horse', 'equestrian', 'roller', 'skate', 'scooter', 'mtb',
-        'gravel', 'ride', 'cycle'
-    ]
 
-    return not any(keyword in name_lower for keyword in non_running_keywords)
+# Whole words only (with common inflections), so "Whiskey" and "Pride" are not caught by
+# "ski" and "ride".
+_NON_RUNNING = re.compile(
+    r"\b(?:bikes?|biker?s?|biking|bicycles?|cycl(?:e|es|ing|ists?)|duathlons?|triathlons?"
+    r"|swim(?:s|mers?|ming)?|paddl(?:e|es|ers?|ing)|kayak(?:s|ing)?|canoe(?:s|ing)?"
+    r"|ski(?:s|ers?|ing)?|snowshoe(?:s|ing)?|hik(?:e|es|ers?|ing)|walk(?:s|ers?|ing)?"
+    r"|skimo|skijor\w*|fatbikes?|handcycl(?:e|es|ing)|horses?|equestrian|roller|skat(?:e|es|ers?|ing)|scooters?|mtb|gravel"
+    r"|rid(?:e|es|ers?|ing))\b",
+    re.IGNORECASE,
+)
 
 
 def process_results(results: pd.DataFrame) -> pd.DataFrame:
