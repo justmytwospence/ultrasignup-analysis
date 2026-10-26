@@ -1,7 +1,0 @@
-{
-  "database": "dolt",
-  "backend": "dolt",
-  "dolt_mode": "embedded",
-  "dolt_database": "UltraSignup",
-  "project_id": "d4e79761-f174-46eb-84f8-92f0d8514586"
-}
