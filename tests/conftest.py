@@ -23,7 +23,8 @@ CREATE TABLE events (event_id INTEGER, series_id INTEGER, event_name VARCHAR);
 CREATE TABLE relay_results (did INTEGER, team_name VARCHAR);
 CREATE TABLE results (
     did INTEGER, runner_id INTEGER, course_id VARCHAR, race_name VARCHAR, race_date DATE,
-    year INTEGER, distance_km DOUBLE, race_format VARCHAR, gender VARCHAR, age INTEGER,
+    year INTEGER, distance_km DOUBLE, race_format VARCHAR, first_name VARCHAR, last_name VARCHAR,
+    gender VARCHAR, age INTEGER,
     status VARCHAR, finish_time_s DOUBLE, source VARCHAR
 );
 """
@@ -68,7 +69,7 @@ def build_mirror(path: Path, schema_version: str = "1.0") -> Path:
     con.execute(SCHEMA)
     con.execute("INSERT INTO about VALUES (?, now())", [schema_version])
     con.executemany(
-        "INSERT INTO results VALUES (?, ?, ?, ?, DATE '2025-06-01', 2025, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO results VALUES (?, ?, ?, ?, DATE '2025-06-01', 2025, ?, ?, 'Ann', 'Runner', ?, ?, ?, ?, ?)",
         RESULTS,
     )
     con.execute("INSERT INTO races SELECT DISTINCT did, course_id, race_name, race_date, distance_km, race_format, did = 9, false FROM results")

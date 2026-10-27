@@ -17,7 +17,7 @@ turns them into the model frame every notebook consumes. Its column contract is:
     finished            True for finishers, False for DNFs
     pace_min_mi         finisher pace
     gender, age
-plus pass-through context: course_id, race_name, race_date, year, distance_km, status, source.
+plus pass-through context: first_name, last_name, course_id, race_name, race_date, year, distance_km, status, source.
 """
 
 from __future__ import annotations
@@ -56,6 +56,8 @@ RESULT_COLUMNS = (
     "year",
     "distance_km",
     "race_format",
+    "first_name",
+    "last_name",
     "gender",
     "age",
     "status",
