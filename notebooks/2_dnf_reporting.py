@@ -24,9 +24,9 @@ def _(mo):
     - **reports, zero DNFs**: it posts DNS rows but no DNFs, so it lists non-finishers and the zero is real
     - **unknown**: it posts neither, so it either had no DNFs or does not report them
 
-    The model infers, for the unknown editions, the probability that they report. Reporting depends on era and on the organizer (series); the DNF rate depends on distance. An unknown edition whose zero DNFs would be very surprising for its distance and field size is probably not reporting.
+    The model infers, for the unknown editions, the probability that they report. Reporting depends on era and on the organizer (series); the DNF rate depends on distance. An unknown edition whose zero DNFs would be very surprising for its distance and field size is probably not reporting. nb 4 reuses the reporting part.
 
-    This notebook first looks at the editions, then (next) fits that model. nb 4 reuses its reporting part.
+    The notebook follows the Bayesian workflow: data, model and prior predictive check, fit and convergence, posterior predictive checks, model comparison with LOO, prior sensitivity, and finally the results.
     """)
     return
 
@@ -52,7 +52,9 @@ def _():
     import pandas as pd
     import pymc as pm
     import pytensor.tensor as pt
+    import xarray as xr
     import matplotlib.pyplot as plt
+    from scipy.special import betaln, expit, gammaln, log_expit
 
     from utils import mirror
     from utils.data_processing import is_running_race
@@ -60,9 +62,13 @@ def _():
     return (
         Path,
         az,
+        betaln,
         datetime,
+        expit,
+        gammaln,
         hashlib,
         is_running_race,
+        log_expit,
         mirror,
         np,
         pd,
@@ -70,6 +76,7 @@ def _():
         pm,
         pt,
         time,
+        xr,
     )
 
 
@@ -95,6 +102,7 @@ def _(is_running_race, mirror, np):
         ['reports', 'reports, zero DNFs'],
         default='unknown',
     )
+    editions['known_reporting'] = editions['kind'] != 'unknown'
     editions['log_distance'] = np.log(editions['distance_km'] / 50)
     editions
     return (editions,)
@@ -103,7 +111,9 @@ def _(is_running_race, mirror, np):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Editions
+    ## Data
+
+    ### Edition kinds
 
     How many editions of each kind, and how big they are. Starters here are finishers plus DNFs; for unknown editions that is just finishers.
     """)
@@ -126,7 +136,7 @@ def _(editions):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Reporting by era and distance
+    ### Reporting by era and distance
 
     Share of editions known to report (either reporting kind), by year and by distance. Reporting is mostly a matter of era: before about 2010 almost nothing posts DNFs.
     """)
@@ -135,7 +145,6 @@ def _(mo):
 
 @app.cell
 def _(editions, pd, plt):
-    editions['known_reporting'] = editions['kind'] != 'unknown'
     _by_year = editions.groupby('year').agg(share=('known_reporting', 'mean'), n=('did', 'size'))
     _by_year = _by_year[_by_year['n'] >= 20]
     _bands = pd.cut(editions['distance_km'], [42, 46, 60, 85, 110, 165],
@@ -158,7 +167,7 @@ def _(editions, pd, plt):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Reporting by series
+    ### Reporting by series
 
     For series with at least five editions since 2010, the share of those editions known to report. If organizers are consistent, this piles up near 0 and 1; a series effect in the model is worth it only if it does.
     """)
@@ -205,10 +214,10 @@ def _(mo):
 
 
 @app.cell
-def _(editions, np, pd, pm, pt):
+def _(betaln, editions, expit, gammaln, log_expit, np, pd, pm, pt, xr):
     series_idx, series_ids = pd.factorize(editions['series_id'])
-    # Almost nothing reports before 2010, so years before 2005 share one level; the random
-    # walk runs from 2005 (2005 stands for '2005 and earlier').
+    # Almost nothing reports before 2010, so years before 2005 share one level
+    # (2005 stands for '2005 and earlier').
     years = np.arange(2005, editions['year'].max() + 1)
     year_idx = (editions['year'].clip(lower=2005) - years[0]).to_numpy()
     log_distance = editions['log_distance'].to_numpy()
@@ -217,9 +226,10 @@ def _(editions, np, pd, pm, pt):
     _k = editions['n_dnf'].to_numpy()
     _f = editions['n_finishers'].to_numpy()
     _lists_dns = (editions['n_dns'] > 0).to_numpy()
-    _rep = np.flatnonzero(editions['kind'] == 'reports')
-    _zero = np.flatnonzero(editions['kind'] == 'reports, zero DNFs')
-    _unk = np.flatnonzero(editions['kind'] == 'unknown')
+    _kind = editions['kind'].to_numpy()
+    _rep = np.flatnonzero(_kind == 'reports')
+    _zero = np.flatnonzero(_kind == 'reports, zero DNFs')
+    _unk = np.flatnonzero(_kind == 'unknown')
 
 
     def _log_sigmoid(x):
@@ -230,40 +240,80 @@ def _(editions, np, pd, pm, pt):
         return pt.gammaln(a) + pt.gammaln(b) - pt.gammaln(a + b)
 
 
-    _coords = {'year': years, 'series': series_ids}
-    with pm.Model(coords=_coords) as reporting_model:
-        # Reporting: a free effect per year (reporting jumps around 2010 rather than drifting,
-        # and every year has hundreds of editions) + series effect + distance slope
-        year_effect = pm.Normal('year_effect', 0.0, 5.0, dims='year')
-        series_sd = pm.HalfNormal('series_sd', 2.0)
-        _series_raw = pm.Normal('series_raw', 0.0, 1.0, dims='series')
-        series_effect = pm.Deterministic('series_effect', series_sd * _series_raw, dims='series')
-        report_distance = pm.Normal('report_distance', 0.0, 1.0)
-        _logit_r = year_effect[year_idx] + series_effect[series_idx] + report_distance * log_distance
+    def build_reporting_model(series_effect=True, distance_on_reporting=True):
+        """The reporting model; the flags drop terms for the model comparison."""
+        with pm.Model(coords={'year': years, 'series': series_ids}) as _model:
+            # Reporting: a free effect per year (reporting jumps around 2010 rather than
+            # drifting, and every year has hundreds of editions) + series effect + distance slope
+            _year_effect = pm.Normal('year_effect', 0.0, 5.0, dims='year')
+            _logit_r = _year_effect[year_idx]
+            if series_effect:
+                _series_sd = pm.HalfNormal('series_sd', 2.0)
+                _series_raw = pm.Normal('series_raw', 0.0, 1.0, dims='series')
+                _series_effect = pm.Deterministic('series_effect', _series_sd * _series_raw, dims='series')
+                _logit_r = _logit_r + _series_effect[series_idx]
+            if distance_on_reporting:
+                _report_distance = pm.Normal('report_distance', 0.0, 1.0)
+                _logit_r = _logit_r + _report_distance * log_distance
 
-        # DNF rate: beta-binomial on log distance
-        dnf_intercept = pm.Normal('dnf_intercept', -1.5, 1.0)
-        dnf_distance = pm.Normal('dnf_distance', 0.0, 1.0)
-        kappa = pm.LogNormal('kappa', np.log(10.0), 1.0)
-        _p = pm.math.invlogit(dnf_intercept + dnf_distance * log_distance)
-        _a, _b = _p * kappa, (1 - _p) * kappa
+            # DNF rate: beta-binomial on log distance
+            _dnf_intercept = pm.Normal('dnf_intercept', -1.5, 1.0)
+            _dnf_distance = pm.Normal('dnf_distance', 0.0, 1.0)
+            _kappa = pm.LogNormal('kappa', np.log(10.0), 1.0)
+            _p = pm.math.invlogit(_dnf_intercept + _dnf_distance * log_distance)
+            _a, _b = _p * _kappa, (1 - _p) * _kappa
 
-        # Listing DNS rows, given reporting: logit linear in log field size
-        dns_intercept = pm.Normal('dns_intercept', 0.0, 1.5)
-        dns_field = pm.Normal('dns_field', 0.0, 1.0)
-        _logit_d = dns_intercept + dns_field * log_field
+            # Listing DNS rows, given reporting: logit linear in log field size
+            _dns_intercept = pm.Normal('dns_intercept', 0.0, 1.5)
+            _dns_field = pm.Normal('dns_field', 0.0, 1.0)
+            _logit_d = _dns_intercept + _dns_field * log_field
 
-        _log_r, _log_not_r = _log_sigmoid(_logit_r), _log_sigmoid(-_logit_r)
-        _log_d, _log_not_d = _log_sigmoid(_logit_d), _log_sigmoid(-_logit_d)
-        _log_q0 = _betaln(_a, _b + _f) - _betaln(_a, _b)
+            _log_r, _log_not_r = _log_sigmoid(_logit_r), _log_sigmoid(-_logit_r)
+            _log_d, _log_not_d = _log_sigmoid(_logit_d), _log_sigmoid(-_logit_d)
+            _log_q0 = _betaln(_a, _b + _f) - _betaln(_a, _b)
 
-        _bb = pm.logp(pm.BetaBinomial.dist(alpha=_a[_rep], beta=_b[_rep], n=_n[_rep]), _k[_rep])
-        pm.Potential('reports', (_log_r[_rep] + _bb + pt.switch(_lists_dns[_rep], _log_d[_rep], _log_not_d[_rep])).sum())
-        pm.Potential('reports_zero', (_log_r[_zero] + _log_q0[_zero] + _log_d[_zero]).sum())
-        pm.Potential('unknown', pm.math.logaddexp(_log_r[_unk] + _log_q0[_unk] + _log_not_d[_unk], _log_not_r[_unk]).sum())
+            _bb = pm.logp(pm.BetaBinomial.dist(alpha=_a[_rep], beta=_b[_rep], n=_n[_rep]), _k[_rep])
+            pm.Potential('reports', (_log_r[_rep] + _bb + pt.switch(_lists_dns[_rep], _log_d[_rep], _log_not_d[_rep])).sum())
+            pm.Potential('reports_zero', (_log_r[_zero] + _log_q0[_zero] + _log_d[_zero]).sum())
+            pm.Potential('unknown', pm.math.logaddexp(_log_r[_unk] + _log_q0[_unk] + _log_not_d[_unk], _log_not_r[_unk]).sum())
+        return _model
 
+
+    def edition_loglik(posterior):
+        """Log-likelihood of each edition for every draw, as (chain, draw, edition): the
+        Potentials' three terms edition by edition, for LOO and power-scaling. Terms a model
+        variant lacks (series, distance on reporting) count as zero."""
+        _get = lambda v: posterior[v].values if v in posterior else None
+        _ye, _se, _rd = _get('year_effect'), _get('series_effect'), _get('report_distance')
+        _out = np.empty((posterior.sizes['chain'], posterior.sizes['draw'], len(editions)))
+        for _c in range(posterior.sizes['chain']):
+            _col = lambda v: posterior[v].values[_c][:, None]
+            _logit_r = _ye[_c][:, year_idx]
+            if _se is not None:
+                _logit_r = _logit_r + _se[_c][:, series_idx]
+            if _rd is not None:
+                _logit_r = _logit_r + _rd[_c][:, None] * log_distance
+            _p = expit(_col('dnf_intercept') + _col('dnf_distance') * log_distance)
+            _a, _b = _p * _col('kappa'), (1 - _p) * _col('kappa')
+            _logit_d = _col('dns_intercept') + _col('dns_field') * log_field
+            _log_r, _log_not_r = log_expit(_logit_r), log_expit(-_logit_r)
+            _log_d, _log_not_d = log_expit(_logit_d), log_expit(-_logit_d)
+            _log_q0 = betaln(_a, _b + _f) - betaln(_a, _b)
+            _log_bb = gammaln(_n + 1) - gammaln(_k + 1) - gammaln(_n - _k + 1) + betaln(_k + _a, _n - _k + _b) - betaln(_a, _b)
+            _out[_c] = np.select(
+                [_kind == 'reports', _kind == 'reports, zero DNFs'],
+                [_log_r + _log_bb + np.where(_lists_dns, _log_d, _log_not_d), _log_r + _log_q0 + _log_d],
+                np.logaddexp(_log_r + _log_q0 + _log_not_d, _log_not_r),
+            )
+        return xr.DataArray(_out, dims=('chain', 'draw', 'edition'),
+                            coords={'chain': posterior['chain'], 'draw': posterior['draw']})
+
+
+    reporting_model = build_reporting_model()
     reporting_model
     return (
+        build_reporting_model,
+        edition_loglik,
         log_distance,
         log_field,
         reporting_model,
@@ -276,7 +326,7 @@ def _(editions, np, pd, pm, pt):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Predictive checks
+    ### Simulator
 
     `simulate_editions` runs the model forward from one set of parameters per draw: whether each edition reports, its DNF rate, its DNF count given its finishers, and whether it lists DNS rows. That yields a simulated kind per edition, comparable with the observed one. The same simulator serves the prior and posterior checks.
     """)
@@ -324,7 +374,7 @@ def _(editions, log_distance, np, pd, series_idx, year_idx):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Prior predictive
+    ### Prior predictive check
 
     What the priors alone imply for the share of each kind and the DNF rate of reporting editions, against the observed values (dashed). The priors should allow the data without concentrating on it.
     """)
@@ -394,21 +444,27 @@ def _(
     _key = hashlib.sha1(pd.util.hash_pandas_object(
         editions[['did', 'series_id', 'year', 'distance_km', 'n_starters', 'n_dnf', 'n_dns', 'kind']], index=False
     ).to_numpy().tobytes()).hexdigest()[:12]
+    _cache_dir = Path(__file__).resolve().parent.parent / 'data' / 'cache' / 'model_2'
+    _cache_dir.mkdir(parents=True, exist_ok=True)
     # Bump when the model changes, so a cached trace is never reused for a different model.
     _MODEL_VERSION = 3
-    reporting_cache = Path(__file__).resolve().parent.parent / 'data' / 'cache' / 'model_2' / f'reporting_v{_MODEL_VERSION}_{_key}.nc'
-    reporting_cache.parent.mkdir(parents=True, exist_ok=True)
 
-    if reporting_cache.exists():
-        reporting_trace = az.from_netcdf(reporting_cache)
-    else:
-        mo.output.replace(mo.callout(mo.md(f"Sampling the reporting model since {datetime.now():%H:%M} (a few minutes)."), kind='info'))
+
+    def fit_reporting(model, label):
+        """Sample `model` with nutpie, or load its cached trace (keyed by label, model version and data)."""
+        _path = _cache_dir / f'reporting_{label}_v{_MODEL_VERSION}_{_key}.nc'
+        if _path.exists():
+            return az.from_netcdf(_path)
+        mo.output.replace(mo.callout(mo.md(f"Sampling the {label} reporting model since {datetime.now():%H:%M} (about 5 minutes)."), kind='info'))
         _start = time.time()
-        with reporting_model:
-            reporting_trace = pm.sample(draws=1000, tune=1000, chains=4, target_accept=0.95, nuts_sampler='nutpie', random_seed=42, progressbar=True)
-        reporting_trace.to_netcdf(reporting_cache)
-        print(f'Sampled in {(time.time() - _start) / 60:.1f} min')
+        with model:
+            _trace = pm.sample(draws=1000, tune=1000, chains=4, target_accept=0.95, nuts_sampler='nutpie', random_seed=42, progressbar=True)
+        _trace.to_netcdf(_path)
+        print(f'{label}: sampled in {(time.time() - _start) / 60:.1f} min')
+        return _trace
 
+
+    reporting_trace = fit_reporting(reporting_model, 'full')
     reporting_summary = az.summary(
         reporting_trace,
         var_names=['series_sd', 'report_distance', 'dnf_intercept', 'dnf_distance', 'kappa', 'dns_intercept', 'dns_field'],
@@ -416,71 +472,13 @@ def _(
     )
     print(f"Divergences: {int(reporting_trace.sample_stats['diverging'].sum())}")
     reporting_summary
-    return (reporting_trace,)
+    return fit_reporting, reporting_trace
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Reporting over time and per edition
-
-    Left: probability of reporting by year (2005 stands for 2005 and earlier) for a typical series at 50 km (series effect zero), with a 94% band. Right: for the unknown editions, the posterior probability that they do report (so their zero DNFs are real), by era.
-    """)
-    return
-
-
-@app.cell
-def _(
-    az,
-    editions,
-    log_distance,
-    log_field,
-    np,
-    plt,
-    reporting_trace,
-    series_idx,
-    year_idx,
-    years,
-):
-    _post = az.extract(reporting_trace, num_samples=400, rng=1)
-    _ye = _post['year_effect'].values                           # (year, draw)
-    _curve = 1 / (1 + np.exp(-_ye))
-
-    # P(reports | unknown) per edition, averaged over draws
-    _logit_r = _ye[year_idx] + _post['series_effect'].values[series_idx] + _post['report_distance'].values * log_distance[:, None]
-    _p = 1 / (1 + np.exp(-(_post['dnf_intercept'].values + _post['dnf_distance'].values * log_distance[:, None])))
-    _kap = _post['kappa'].values
-    _a, _b = _p * _kap, (1 - _p) * _kap
-    from scipy.special import betaln as _betaln_np, expit as _expit
-    _f = editions['n_finishers'].to_numpy()[:, None]
-    _q0 = np.exp(_betaln_np(_a, _b + _f) - _betaln_np(_a, _b))
-    _d = _expit(_post['dns_intercept'].values + _post['dns_field'].values * log_field[:, None])
-    _r = _expit(_logit_r)
-    _p_rep = _r * _q0 * (1 - _d) / (_r * _q0 * (1 - _d) + 1 - _r)
-    edition_reporting = editions[['did', 'course_id', 'series_id', 'year', 'distance_km', 'n_finishers', 'kind']].assign(
-        p_reports=np.where(editions['kind'] == 'unknown', _p_rep.mean(axis=1), 1.0)
-    )
-
-    _fig, (_ax1, _ax2) = plt.subplots(1, 2, figsize=(12, 4))
-    _ax1.plot(years, np.median(_curve, axis=1), color='#2A9D8F')
-    _ax1.fill_between(years, *np.percentile(_curve, [3, 97], axis=1), color='#2A9D8F', alpha=0.25)
-    _ax1.set(title='P(reports DNFs) by year, typical series at 50 km', xlabel='Year', ylabel='Probability', ylim=(0, 1))
-    _ax1.grid(alpha=0.3)
-    _unknown = edition_reporting[edition_reporting['kind'] == 'unknown']
-    for _label, _mask, _color in [('before 2010', _unknown['year'] < 2010, '#999999'), ('2010 onward', _unknown['year'] >= 2010, '#2A9D8F')]:
-        _ax2.hist(_unknown.loc[_mask, 'p_reports'], bins=25, range=(0, 1), alpha=0.6, color=_color, label=f'{_label} ({_mask.sum():,})')
-    _ax2.set(title='P(reports | nothing posted), unknown editions', xlabel='Probability', ylabel='Editions')
-    _ax2.legend()
-    _ax2.grid(alpha=0.3, axis='y')
-    _fig.tight_layout()
-    _fig
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Diagnostics
+    ### Convergence
 
     Rank plots for the scalar parameters: with good mixing every chain's ranks are uniform (flat bars). Divergences, R-hat and ESS are in the fit summary above; the 8,000-odd year and series effects have R-hat at most about 1.01.
     """)
@@ -499,7 +497,7 @@ def _(az, np, reporting_trace):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### Posterior predictive
+    ## Posterior predictive checks
 
     The same simulation from 200 posterior draws. Each panel compares the observed share of a kind (dots) with the predicted median and 94% band, by year (top) and by finishers (bottom). Field size is the axis the model leans on to call an unknown edition non-reporting, so the bottom row is the sharpest test.
     """)
@@ -597,6 +595,137 @@ def _(editions, np, pd, plt, post_dnfs, post_kinds):
     _ax2.set(title='Mean DNF rate of reporting editions, by distance', ylabel='DNFs / starters', ylim=(0, None))
     _ax2.legend()
     _ax2.grid(alpha=0.3)
+    _fig.tight_layout()
+    _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Model comparison
+
+    PSIS-LOO estimates how well each model predicts an edition it has not seen (expected log predictive density, higher is better). The full model is compared with two simpler ones, each dropping one reporting term:
+
+    - **no series effect**: every organizer reports at the same rate for a given year and distance
+    - **no distance on reporting**: reporting does not depend on distance (DNF rates still do)
+
+    LOO uses every 4th draw (1,000 per model). Pareto $\hat k$ above 0.7 marks editions whose LOO estimate is unreliable, typically ones that alone pin down their series' effect.
+    """)
+    return
+
+
+@app.cell
+def _(build_reporting_model, fit_reporting, reporting_trace):
+    comparison_traces = {
+        'full': reporting_trace,
+        'no series effect': fit_reporting(build_reporting_model(series_effect=False), 'no_series'),
+        'no distance on reporting': fit_reporting(build_reporting_model(distance_on_reporting=False), 'no_report_distance'),
+    }
+    return (comparison_traces,)
+
+
+@app.cell
+def _(az, comparison_traces, edition_loglik, xr):
+    def _with_loglik(trace):
+        _posterior = trace.posterior.sel(draw=slice(None, None, 4))
+        return az.InferenceData(posterior=_posterior, log_likelihood=xr.Dataset({'reporting': edition_loglik(_posterior)}))
+
+
+    loo_data = {_name: _with_loglik(_t) for _name, _t in comparison_traces.items()}
+    reporting_loos = {_name: az.loo(_d, pointwise=True) for _name, _d in loo_data.items()}
+    reporting_comparison = az.compare(reporting_loos).assign(
+        share_k_over_0_7=lambda d: [float((reporting_loos[_m].pareto_k > 0.7).mean()) for _m in d.index]
+    )
+    reporting_comparison.round(3)
+    return loo_data, reporting_comparison
+
+
+@app.cell
+def _(az, reporting_comparison):
+    _ax = az.plot_compare(reporting_comparison, figsize=(10, 3))
+    _ax.set_title('Expected log predictive density (PSIS-LOO), with standard errors')
+    _ax.figure
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Prior sensitivity
+
+    Power-scaling sensitivity (priorsense): how far each posterior moves when its prior is raised to a power near 1. Values above 0.05 would mean the prior, not the data, shapes that parameter.
+
+    Scaled are the priors we chose: the top-level parameters and the year effects. The standardized series effects (`series_raw`, 2,372 unit normals) belong to the hierarchy, not to a choice of prior; scaling them too, like scaling the whole likelihood, makes the importance weights collapse with this many parameters, so those columns are not shown. Uses the same thinned full-model draws as LOO.
+    """)
+    return
+
+
+@app.cell
+def _(az, loo_data, np, pd, pm, reporting_model):
+    _idata = loo_data['full'].copy()
+    pm.compute_log_prior(_idata, model=reporting_model)
+    _scalars = ['series_sd', 'report_distance', 'dnf_intercept', 'dnf_distance', 'kappa', 'dns_intercept', 'dns_field']
+    _sens = az.psens(_idata, component='prior', component_var_names=_scalars + ['year_effect'], var_names=_scalars)
+    prior_sensitivity = pd.DataFrame({'prior sensitivity': [float(_sens[_v]) for _v in _scalars]}, index=_scalars)
+    prior_sensitivity['diagnosis'] = np.where(prior_sensitivity['prior sensitivity'] >= 0.05, 'prior-sensitive', 'data-dominated')
+    prior_sensitivity.round(4)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Results
+
+    Left: probability of reporting by year (2005 stands for 2005 and earlier) for a typical series at 50 km (series effect zero), with a 94% band. Right: for the unknown editions, the posterior probability that they do report (so their zero DNFs are real), by era.
+    """)
+    return
+
+
+@app.cell
+def _(
+    az,
+    editions,
+    log_distance,
+    log_field,
+    np,
+    plt,
+    reporting_trace,
+    series_idx,
+    year_idx,
+    years,
+):
+    _post = az.extract(reporting_trace, num_samples=400, rng=1)
+    _ye = _post['year_effect'].values                           # (year, draw)
+    _curve = 1 / (1 + np.exp(-_ye))
+
+    # P(reports | unknown) per edition, averaged over draws
+    _logit_r = _ye[year_idx] + _post['series_effect'].values[series_idx] + _post['report_distance'].values * log_distance[:, None]
+    _p = 1 / (1 + np.exp(-(_post['dnf_intercept'].values + _post['dnf_distance'].values * log_distance[:, None])))
+    _kap = _post['kappa'].values
+    _a, _b = _p * _kap, (1 - _p) * _kap
+    from scipy.special import betaln as _betaln_np, expit as _expit
+    _f = editions['n_finishers'].to_numpy()[:, None]
+    _q0 = np.exp(_betaln_np(_a, _b + _f) - _betaln_np(_a, _b))
+    _d = _expit(_post['dns_intercept'].values + _post['dns_field'].values * log_field[:, None])
+    _r = _expit(_logit_r)
+    _p_rep = _r * _q0 * (1 - _d) / (_r * _q0 * (1 - _d) + 1 - _r)
+    edition_reporting = editions[['did', 'course_id', 'series_id', 'year', 'distance_km', 'n_finishers', 'kind']].assign(
+        p_reports=np.where(editions['kind'] == 'unknown', _p_rep.mean(axis=1), 1.0)
+    )
+
+    _fig, (_ax1, _ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    _ax1.plot(years, np.median(_curve, axis=1), color='#2A9D8F')
+    _ax1.fill_between(years, *np.percentile(_curve, [3, 97], axis=1), color='#2A9D8F', alpha=0.25)
+    _ax1.set(title='P(reports DNFs) by year, typical series at 50 km', xlabel='Year', ylabel='Probability', ylim=(0, 1))
+    _ax1.grid(alpha=0.3)
+    _unknown = edition_reporting[edition_reporting['kind'] == 'unknown']
+    for _label, _mask, _color in [('before 2010', _unknown['year'] < 2010, '#999999'), ('2010 onward', _unknown['year'] >= 2010, '#2A9D8F')]:
+        _ax2.hist(_unknown.loc[_mask, 'p_reports'], bins=25, range=(0, 1), alpha=0.6, color=_color, label=f'{_label} ({_mask.sum():,})')
+    _ax2.set(title='P(reports | nothing posted), unknown editions', xlabel='Probability', ylabel='Editions')
+    _ax2.legend()
+    _ax2.grid(alpha=0.3, axis='y')
     _fig.tight_layout()
     _fig
     return
