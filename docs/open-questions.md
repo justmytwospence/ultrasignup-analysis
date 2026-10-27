@@ -25,8 +25,12 @@ on the 2025 scrape.
   series; `process_results` drops such rows as a safety net.
 - **Distances and formats are inferred by the mirror** from labels (`races.distance_km`,
   `race_format`, `fixed_time_unit`); `distance_label` and the page's `distance_type` sit
-  alongside. Spot-check races with a NULL `distance_km` or a format that disagrees with
-  `distance_type` before trusting the k-core.
+  alongside. 7,265 distance-format races have NULL `distance_km` (dropped); spot-check races
+  whose format disagrees with `distance_type` (backyard ultras posted as distance races)
+  before trusting the k-core.
+- **Plausibility bounds** in `process_results` (age 10 to 95, pace 5 to 60 min/mile) are
+  first guesses against the mirror's reported junk (ages under 5, finishes over 14 days).
+  Check how many rows each bound drops on the first pull.
 - **Races retracted since 2025 have no results.** The mirror imports nothing from the 2025
   scrape, so `data/legacy/ultrasignup.duckdb` is the only copy of those rows. Count what the
   refits lose (the mirror's `scripts/validate.py` lists them) before deleting `data/legacy/`.
@@ -43,13 +47,13 @@ on the 2025 scrape.
 - **Experience.** `results.runner_nth_race` (1 = debut) is a point-in-time covariate that does
   not leak the future, unlike the old `runner_rank` (the runner's *current* rank).
 
-Coming with the mirror's Phase 4 backfill (histories, entrants); `pull()` copies the new
-tables automatically:
+Not in the mirror (v0.1.0); would need mirror work (entrant rosters, runner histories):
 
 - **DNS-aware modeling** from entrant rosters (registered field per race), for nb 2 and nb 4.
 - **Point-in-time runner strength** from per-race scores in runner histories.
-- **Hidden results** (`source = 'participant_history'`): races whose results pages are not
-  public. Their fields are incomplete; decide per model whether to include them.
+- **Hidden results**: about a third of editions show results only on runner pages and are
+  absent from `results`. If hiding correlates with race type or organizer, course coverage is
+  biased; `events.results_hidden` and `races.results_state = 'hidden'` let us measure that.
 
 ## nb 1: finish times
 

@@ -20,9 +20,13 @@ a complete DuckDB mirror of UltraSignup and serves it read-only over DuckDB's Qu
   `EXPECTED_SCHEMA_MAJOR`; on a bump, update `utils/` and the tests, then the constant.
 - `utils/data_processing.py`: `load_results()` reads `main.results`; `process_results()` builds
   the model frame every notebook uses (column contract in its docstring). Starts are finish or
-  DNF; `dns` and `dq` are dropped, as are races with a NULL `course_id` (series not fetched
-  yet, mid-backfill). Hidden results (`participant_history`, from the mirror's Phase 4) are
-  opt-in. Nothing from the 2025 scrape is imported.
+  DNF; `dns` and `dq` are dropped, as are races with a NULL `course_id` or `distance_km`, and
+  implausible ages and paces (the mirror never cleans posted values; bounds are constants
+  there). `source` is always `results_api`: hidden results (about a third of editions) are not
+  mirrored, and nothing from the 2025 scrape is imported. Relays live in `relay_results`.
+- Quack limits: bound parameters do not pass through (inline literals), and a query cannot
+  stream two remote tables at once (no join of two remote tables: pull, or make a local
+  TEMP TABLE from one first). Needs WireGuard off the LAN.
 - DuckDB is pinned to 2.0 (the mirror's version, required by Quack).
 - `data/` is gitignored: `mirror.duckdb`, `cache/` (k-core subsets and traces) and `legacy/`
   (the 2025 scrape and old checkouts, kept until the refits on mirror data are done).
