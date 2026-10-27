@@ -62,8 +62,10 @@ k-core chosen in 0). `notebooks/legacy_ipynb/` holds the pre-marimo originals, r
   `HalfNormal` scales and `LKJCorr` instead). Give long cells a `mo.callout` beacon with the
   start time and expected duration. For final inference too slow locally, the `Dockerfile`
   builds a RunPod JAX-CUDA image (numpyro is fine there).
-- Dev k-core: develop at a tight (α, β) such as (3, 840), check `n_courses` after subsetting
-  (nb 0/1 filter to courses with DNFs, nb 3/4 do not), and loosen for final fits.
+- Dev k-core: develop at a tight (α, β) such as (3, 500) (25 courses; (3, 840) is empty since
+  the graph counts only DNF-reporting editions), check `n_courses` after subsetting, and loosen
+  for final fits. The full (α, β) sweep takes about a minute; its cache key includes a data
+  fingerprint.
 
 Open modeling problems and planned work: `docs/open-questions.md`. Past plans: `docs/history/`.
 
