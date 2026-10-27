@@ -276,6 +276,103 @@ def _(editions, np, pd, pm, pt):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ## Predictive checks
+
+    `simulate_editions` runs the model forward from one set of parameters per draw: whether each edition reports, its DNF rate, its DNF count given its finishers, and whether it lists DNS rows. That yields a simulated kind per edition, comparable with the observed one. The same simulator serves the prior and posterior checks.
+    """)
+    return
+
+
+@app.cell
+def _(editions, log_distance, np, pd, series_idx, year_idx):
+    KINDS = ['reports', 'reports, zero DNFs', 'unknown']
+    PARAMS = ['year_effect', 'series_effect', 'report_distance', 'dnf_intercept', 'dnf_distance', 'kappa', 'dns_intercept', 'dns_field']
+
+
+    def draws_of(group, n_draws, seed=0):
+        """Parameters from an InferenceData group, draws first, n_draws chosen at random."""
+        _stacked = {v: group[v].stack(sample=('chain', 'draw')).transpose('sample', ...).values for v in PARAMS}
+        _pick = np.random.default_rng(seed).choice(len(_stacked['kappa']), n_draws, replace=False)
+        return {v: a[_pick] for v, a in _stacked.items()}
+
+
+    def simulate_editions(params, seed=0):
+        """Simulated kind (index into KINDS) and DNF count per draw and edition, given finishers."""
+        _rng = np.random.default_rng(seed)
+        _expit = lambda x: 1 / (1 + np.exp(-x))
+        _f = editions['n_finishers'].to_numpy()
+        _S = len(params['kappa'])
+        kinds = np.empty((_S, len(editions)), dtype=np.int8)
+        dnfs = np.empty((_S, len(editions)), dtype=np.int64)
+        for s in range(_S):
+            _report = _rng.random(len(_f)) < _expit(
+                params['year_effect'][s][year_idx] + params['series_effect'][s][series_idx] + params['report_distance'][s] * log_distance
+            )
+            _p = _expit(params['dnf_intercept'][s] + params['dnf_distance'][s] * log_distance)
+            _theta = np.clip(_rng.beta(_p * params['kappa'][s], (1 - _p) * params['kappa'][s]), 1e-9, 1 - 1e-9)
+            _k = _rng.negative_binomial(np.maximum(_f, 1), 1 - _theta)  # DNFs before f finishes
+            _lists = _rng.random(len(_f)) < _expit(params['dns_intercept'][s] + params['dns_field'][s] * np.log((_f + _k) / 50))
+            kinds[s] = np.where(_report & (_k > 0), 0, np.where(_report & _lists, 1, 2))
+            dnfs[s] = _k
+        return kinds, dnfs
+
+
+    observed_kind = pd.Categorical(editions['kind'], categories=KINDS).codes
+    return KINDS, PARAMS, draws_of, observed_kind, simulate_editions
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Prior predictive
+
+    What the priors alone imply for the share of each kind and the DNF rate of reporting editions, against the observed values (dashed). The priors should allow the data without concentrating on it.
+    """)
+    return
+
+
+@app.cell
+def _(
+    KINDS,
+    PARAMS,
+    draws_of,
+    editions,
+    np,
+    observed_kind,
+    plt,
+    pm,
+    reporting_model,
+    simulate_editions,
+):
+    with reporting_model:
+        _prior = pm.sample_prior_predictive(draws=200, var_names=PARAMS, random_seed=1)
+    prior_kinds, prior_dnfs = simulate_editions(draws_of(_prior.prior, 200), seed=1)
+
+    _n_obs = editions['n_starters'].to_numpy()
+    _obs_rate = editions.loc[editions['kind'] == 'reports', 'n_dnf'].sum() / _n_obs[editions['kind'] == 'reports'].sum()
+    _f = editions['n_finishers'].to_numpy()
+    _sim_rate = np.array([
+        prior_dnfs[s][prior_kinds[s] == 0].sum() / (_f + prior_dnfs[s])[prior_kinds[s] == 0].sum() if (prior_kinds[s] == 0).any() else np.nan
+        for s in range(len(prior_kinds))
+    ])
+
+    _fig, _axes = plt.subplots(1, 4, figsize=(14, 3))
+    for _i, _kind in enumerate(KINDS):
+        _axes[_i].hist((prior_kinds == _i).mean(axis=1), bins=20, range=(0, 1), color='#999999')
+        _axes[_i].axvline((observed_kind == _i).mean(), color='#E63946', ls='--')
+        _axes[_i].set(title=f'Share {_kind}', xlabel='Share of editions')
+    _axes[3].hist(_sim_rate[~np.isnan(_sim_rate)], bins=20, range=(0, 1), color='#999999')
+    _axes[3].axvline(_obs_rate, color='#E63946', ls='--')
+    _axes[3].set(title='DNF rate, reporting editions', xlabel='DNFs / starters')
+    _axes[0].set_ylabel('Prior draws')
+    _fig.tight_layout()
+    _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## Fit
     """)
     return
@@ -375,6 +472,131 @@ def _(
     _ax2.set(title='P(reports | nothing posted), unknown editions', xlabel='Probability', ylabel='Editions')
     _ax2.legend()
     _ax2.grid(alpha=0.3, axis='y')
+    _fig.tight_layout()
+    _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Diagnostics
+
+    Rank plots for the scalar parameters: with good mixing every chain's ranks are uniform (flat bars). Divergences, R-hat and ESS are in the fit summary above; the 8,000-odd year and series effects have R-hat at most about 1.01.
+    """)
+    return
+
+
+@app.cell
+def _(az, np, reporting_trace):
+    _axes = az.plot_rank(reporting_trace, var_names=['series_sd', 'report_distance', 'dnf_intercept', 'dnf_distance', 'kappa', 'dns_intercept', 'dns_field'], kind='vlines', figsize=(14, 6))
+    _fig = np.ravel(_axes)[0].figure
+    _fig.tight_layout()
+    _fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Posterior predictive
+
+    The same simulation from 200 posterior draws. Each panel compares the observed share of a kind (dots) with the predicted median and 94% band, by year (top) and by finishers (bottom). Field size is the axis the model leans on to call an unknown edition non-reporting, so the bottom row is the sharpest test.
+    """)
+    return
+
+
+@app.cell
+def _(
+    KINDS,
+    draws_of,
+    editions,
+    np,
+    observed_kind,
+    pd,
+    plt,
+    reporting_trace,
+    simulate_editions,
+):
+    post_kinds, post_dnfs = simulate_editions(draws_of(reporting_trace.posterior, 200), seed=2)
+
+
+    def _share_by(groups, kinds):
+        _codes, _labels = pd.factorize(groups, sort=True)
+        _onehot = np.zeros((len(_labels), len(_codes)))
+        _onehot[_codes, np.arange(len(_codes))] = 1
+        _counts = _onehot.sum(axis=1)
+        return _labels, np.stack([(_onehot @ (kinds == _i).T).T / _counts for _i in range(3)], axis=-1)  # (draw, group, kind)
+
+
+    _year = editions['year'].clip(lower=2000).to_numpy()
+    _field = pd.cut(editions['n_finishers'], [-1, 10, 20, 40, 80, 160, 10_000],
+                    labels=['0-10', '11-20', '21-40', '41-80', '81-160', '161+']).astype(str).to_numpy()
+    _order = ['0-10', '11-20', '21-40', '41-80', '81-160', '161+']
+
+    _fig, _axes = plt.subplots(2, 3, figsize=(15, 7), sharey='row')
+    for _row, (_groups, _xlabel) in enumerate([(_year, 'Year (2000 = 2000 and earlier)'), (_field, 'Finishers')]):
+        _labels, _sim = _share_by(_groups, post_kinds)
+        _, _obs = _share_by(_groups, observed_kind[None, :])
+        _pos = np.array([_order.index(l) for l in _labels]) if _row else _labels.astype(int)
+        _sort = np.argsort(_pos)
+        for _i, _kind in enumerate(KINDS):
+            _ax = _axes[_row, _i]
+            _lo, _mid, _hi = np.percentile(_sim[:, _sort, _i], [3, 50, 97], axis=0)
+            _ax.fill_between(_pos[_sort], _lo, _hi, color='#2A9D8F', alpha=0.3, label='predicted 94%')
+            _ax.plot(_pos[_sort], _mid, color='#2A9D8F')
+            _ax.plot(_pos[_sort], _obs[0, _sort, _i], 'o', ms=4, color='#E63946', label='observed')
+            _ax.set(title=_kind, xlabel=_xlabel, ylim=(0, 1))
+            if _row:
+                _ax.set_xticks(range(len(_order)), _order)
+            _ax.grid(alpha=0.3)
+    _axes[0, 0].set_ylabel('Share of editions')
+    _axes[1, 0].set_ylabel('Share of editions')
+    _axes[0, 0].legend()
+    _fig.tight_layout()
+    _fig
+    return post_dnfs, post_kinds
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    DNF rates among editions that report DNFs: the distribution across editions (left) and the mean by distance (right), observed against the posterior predictive. This checks the beta-binomial part, including its overdispersion.
+    """)
+    return
+
+
+@app.cell
+def _(editions, np, pd, plt, post_dnfs, post_kinds):
+    _f = editions['n_finishers'].to_numpy()
+    _rep_obs = editions['kind'].to_numpy() == 'reports'
+    _obs_rate = editions['n_dnf'].to_numpy()[_rep_obs] / editions['n_starters'].to_numpy()[_rep_obs]
+    _bins = np.linspace(0, 1, 26)
+    _hists = np.array([np.histogram(post_dnfs[s][post_kinds[s] == 0] / (_f + post_dnfs[s])[post_kinds[s] == 0], bins=_bins, density=True)[0]
+                       for s in range(len(post_kinds))])
+    _centers = (_bins[1:] + _bins[:-1]) / 2
+
+    _bands = pd.cut(editions['distance_km'], [42, 46, 60, 85, 110, 165], labels=['marathon', '50K', '50 mi', '100K', '100 mi'])
+    _band_codes = _bands.cat.codes.to_numpy()
+    _sim_mean = np.array([[np.mean((post_dnfs[s] / (_f + post_dnfs[s]))[(post_kinds[s] == 0) & (_band_codes == b)]) for b in range(5)]
+                          for s in range(len(post_kinds))])
+    _obs_mean = [np.mean(_obs_rate[_band_codes[_rep_obs] == b]) for b in range(5)]
+
+    _fig, (_ax1, _ax2) = plt.subplots(1, 2, figsize=(13, 4))
+    _ax1.fill_between(_centers, *np.percentile(_hists, [3, 97], axis=0), color='#2A9D8F', alpha=0.3, label='predicted 94%')
+    _ax1.plot(_centers, np.median(_hists, axis=0), color='#2A9D8F')
+    _ax1.plot(_centers, np.histogram(_obs_rate, bins=_bins, density=True)[0], 'o', ms=4, color='#E63946', label='observed')
+    _ax1.set(title='DNF rate per reporting edition', xlabel='DNFs / starters', ylabel='Density')
+    _ax1.legend()
+    _ax1.grid(alpha=0.3)
+    _ax2.errorbar(range(5), np.median(_sim_mean, axis=0),
+                  yerr=np.abs(np.percentile(_sim_mean, [3, 97], axis=0) - np.median(_sim_mean, axis=0)),
+                  fmt='s', color='#2A9D8F', capsize=4, label='predicted 94%')
+    _ax2.plot(range(5), _obs_mean, 'o', color='#E63946', label='observed')
+    _ax2.set_xticks(range(5), _bands.cat.categories)
+    _ax2.set(title='Mean DNF rate of reporting editions, by distance', ylabel='DNFs / starters', ylim=(0, None))
+    _ax2.legend()
+    _ax2.grid(alpha=0.3)
     _fig.tight_layout()
     _fig
     return
