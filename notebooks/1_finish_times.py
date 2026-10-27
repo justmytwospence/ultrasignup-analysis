@@ -249,6 +249,7 @@ def _(mo):
 
 @app.cell
 def _(mo, model_data, model_dir, mu_pace_f, mu_pace_m, pm, sigma_course_prior):
+    import re as _re
     unique_courses = model_data['name'].unique()
     course_to_idx = {course: _idx for _idx, course in enumerate(unique_courses)}
     model_data['course_idx'] = model_data['name'].map(course_to_idx)
@@ -287,10 +288,9 @@ def _(mo, model_data, model_dir, mu_pace_f, mu_pace_m, pm, sigma_course_prior):
     _graph.graph_attr['dpi'] = '72'
     _graph.render(graph_file, format='png', cleanup=True)
     print(f'Saved model structure to {graph_file}.png')
-    # Wrap SVG in a scrollable container so wide DAGs don't overflow the cell.
-    mo.Html(
-        f'<div style="max-width:100%; overflow-x:auto">{_graph.pipe(format="svg").decode()}</div>'
-    )
+    # Scale the SVG to the cell width (drop graphviz's fixed size, keep its viewBox).
+    _svg = _re.sub(r'<svg width="[^"]*" height="[^"]*"', '<svg width="100%"', _graph.pipe(format='svg').decode(), count=1)
+    mo.Html(_svg)
     return (
         gender_indices,
         gender_to_idx,
@@ -1002,6 +1002,7 @@ def _(
     unique_courses_full,
     unique_genders,
 ):
+    import re as _re
     coords_full = {'course': unique_courses_full, 'gender': unique_genders, 'finishers': range(n_observations_full)}
     with pm.Model(coords=coords_full) as model_map:
         _pace_marathon = pm.Data('pace_marathon', pace_marathon_fixed, dims='gender')
@@ -1028,9 +1029,9 @@ def _(
     print(f'\nFree parameters (to be estimated):')
     print(f'  course_finish_time_multiplier_raw (N = {n_courses_full:,})')
     _graph = pm.model_to_graphviz(model_map)
-    mo.Html(
-        f'<div style="max-width:100%; overflow-x:auto">{_graph.pipe(format="svg").decode()}</div>'
-    )
+    # Scale the SVG to the cell width (drop graphviz's fixed size, keep its viewBox).
+    _svg = _re.sub(r'<svg width="[^"]*" height="[^"]*"', '<svg width="100%"', _graph.pipe(format='svg').decode(), count=1)
+    mo.Html(_svg)
     return (model_map,)
 
 
