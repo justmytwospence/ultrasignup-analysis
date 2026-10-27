@@ -3,6 +3,8 @@ name = "ultrasignup-analysis"
 version = "0.1.0"
 description = "Bayesian models of ultramarathon finish times and DNFs, over the UltraSignup mirror"
 requires-python = ">=3.11"
+license = "FSL-1.1-ALv2"
+license-files = ["LICENSE.md"]
 dependencies = [
     "duckdb==2.0.*",
     "python-dotenv>=1.0",
