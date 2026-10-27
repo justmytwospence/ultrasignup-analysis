@@ -52,6 +52,6 @@ Known problems and planned work: [docs/open-questions.md](docs/open-questions.md
 
 ## License
 
-[Functional Source License, Version 1.1, ALv2 Future License](LICENSE.md) (FSL-1.1-ALv2). You may use, modify and self-host it for any purpose except offering a competing commercial product or service; each release becomes available under Apache-2.0 two years after it ships.
+[PolyForm Noncommercial 1.0.0](LICENSE.md): free for personal use, research, education and noncommercial organizations. Commercial use, including building the methodology into a product or service, requires a separate license; contact Spencer Boucher.
 
 Outside contributions require agreeing to a contributor license agreement; open an issue before sending a pull request.
