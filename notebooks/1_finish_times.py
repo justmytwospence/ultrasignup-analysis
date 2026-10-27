@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.4"
+__generated_with = "0.25.1"
 app = marimo.App(width="medium")
 
 
@@ -20,7 +20,7 @@ def _(mo):
 
     This model estimates ultrarunning race pace using gender-specific power law relationships between distance and pace, accounting for course-specific difficulty. The model pools data across multiple years of the same race course to improve parameter estimation.
 
-    **Model Data:** All finishers from races that report DNFs
+    **Model Data:** All finishers (whether a race posts its DNFs does not matter for finish times)
 
     **Data Subsetting:** Well connected k-core subset + closure courses/participants up to `max_entities`
 
@@ -68,7 +68,7 @@ def _():
     import time
 
     # local functions
-    from utils.data_processing import load_results, process_results, filter_races_with_dnfs
+    from utils.data_processing import load_results, process_results
     from utils.kcore_subsetting import subset_kcore_data
     from utils.mcmc_notifications import notify_mcmc_start, notify_mcmc_complete, notify_mcmc_error
     from utils.empirical_priors import (
@@ -84,7 +84,6 @@ def _():
         calculate_course_variation,
         calculate_gender_distance_exponent,
         calculate_gender_marathon_pace,
-        filter_races_with_dnfs,
         load_results,
         notify_mcmc_complete,
         notify_mcmc_error,
@@ -119,12 +118,11 @@ def _(Path, os):
 
     reference_distance = 26.2  # Marathon
 
-    # K-core parameters for dev iteration. (3, 840) keeps the dataset small
-    # (~11 courses, ~22K entities) so the fit completes in single-digit minutes
-    # for diagnostics — but is unidentifiable (r_hat ~4.5); use (3, 629) or
-    # looser for real inference.
+    # K-core parameters for dev iteration. On all finishers, (3, 830) gives 21 courses
+    # and about 100K results, so the fit takes minutes; loosen for real inference
+    # ((3, 800) has 34 courses).
     alpha = 3  # Minimum courses per k-core runner
-    beta = 840  # Minimum runners per k-core course
+    beta = 830  # Minimum runners per k-core course
 
     tune = 2000
     draws = 1000
@@ -170,10 +168,9 @@ def _(mo):
 
 
 @app.cell
-def _(filter_races_with_dnfs, results):
-    # this model does not attempt to model DNF reporting or DNFs themselves
-    results_1 = filter_races_with_dnfs(results)
-    results_1 = results_1[results_1.finished == 1]
+def _(results):
+    # finishers only: this model does not model DNFs or DNF reporting
+    results_1 = results[results['finished']]
     return (results_1,)
 
 
@@ -251,17 +248,7 @@ def _(mo):
 
 
 @app.cell
-def _(
-    beta_f,
-    beta_m,
-    mo,
-    model_data,
-    model_dir,
-    mu_pace_f,
-    mu_pace_m,
-    pm,
-    sigma_course_prior,
-):
+def _(mo, model_data, model_dir, mu_pace_f, mu_pace_m, pm, sigma_course_prior):
     unique_courses = model_data['name'].unique()
     course_to_idx = {course: _idx for _idx, course in enumerate(unique_courses)}
     model_data['course_idx'] = model_data['name'].map(course_to_idx)
@@ -281,7 +268,9 @@ def _(
         # Loosened from sigma=0.1 → 0.3 so the prior doesn't fight the likelihood at
         # the tails of the empirical pace distribution.
         _pace_marathon = pm.Normal('pace_marathon', mu=[mu_pace_m, mu_pace_f], sigma=0.3, dims='gender')
-        _pace_distance_effect = pm.Normal('pace_distance_effect', mu=[beta_m, beta_f], sigma=0.05, dims='gender')
+        # Weakly informative, not from the data: pace slows 0 to 20% per doubling of distance
+        # (Riegel's 1.06 time exponent is 0.06 on pace; ultras run steeper).
+        _pace_distance_effect = pm.Normal('pace_distance_effect', mu=0.1, sigma=0.1, dims='gender')
         _course_finish_time_multiplier_std = pm.HalfNormal('course_finish_time_multiplier_std', sigma=sigma_course_prior)
         # finish_time_noise is now sigma on log(time) — same prior scale (~0.15) gives
         # ~16% CV per finisher, matching the previous Normal-on-time model's effective
@@ -291,7 +280,6 @@ def _(
         _course_finish_time_multiplier = pm.Deterministic('course_finish_time_multiplier', _course_finish_time_multiplier_std * _course_finish_time_multiplier_raw, dims='course')
         _log_distance_ratio = pm.math.log(race_distances / reference_distance_1)
         _expected_log_pace = _pace_marathon[gender_indices] + _pace_distance_effect[gender_indices] * _log_distance_ratio + _course_finish_time_multiplier[course_indices]
-        _expected_pace = pm.Deterministic('expected_pace', pm.math.exp(_expected_log_pace), dims='finishers')
         _expected_log_time = _expected_log_pace + pm.math.log(race_distances)
         pm.LogNormal('finish_times', mu=_expected_log_time, sigma=_finish_time_noise[gender_indices], observed=observed_times, dims='finishers')
     _graph = pm.model_to_graphviz(model)
@@ -1024,7 +1012,6 @@ def _(
         _course_finish_time_multiplier = pm.Deterministic('course_finish_time_multiplier', _course_finish_time_multiplier_std * _course_finish_time_multiplier_raw, dims='course')
         _log_distance_ratio = pm.math.log(race_distances_full / reference_distance_1)
         _expected_log_pace = _pace_marathon[gender_indices_full] + _pace_distance_effect[gender_indices_full] * _log_distance_ratio + _course_finish_time_multiplier[course_indices_full]
-        _expected_pace = pm.Deterministic('expected_pace', pm.math.exp(_expected_log_pace), dims='finishers')
         # Likelihood must match the MCMC model exactly: finish_time_noise is the
         # posterior median of a log-scale sigma, so it is only valid inside a
         # LogNormal — a Normal-on-minutes likelihood with sigma=noise*distance
