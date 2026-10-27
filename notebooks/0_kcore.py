@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.4"
+__generated_with = "0.25.1"
 app = marimo.App(width="medium")
 
 
@@ -363,8 +363,8 @@ def _(alpha, beta, kcore_sample, pd, runner_degrees):
     col_order = col_dendrogram['leaves']
     matrix_clustered = matrix.iloc[row_order, col_order]
     # Combine all percentiles
-    runner_names = kcore_matrix_sample[['participant_id', 'firstname', 'lastname']].drop_duplicates('participant_id').set_index('participant_id')
-    runner_names['full_name'] = runner_names['firstname'] + ' ' + runner_names['lastname']
+    runner_names = kcore_matrix_sample[['participant_id', 'first_name', 'last_name']].drop_duplicates('participant_id').set_index('participant_id')
+    runner_names['full_name'] = runner_names['first_name'] + ' ' + runner_names['last_name']
     # Create matrix with percentiles
     matrix_clustered_with_names = matrix_clustered.copy()
     matrix_clustered_with_names.index = [runner_names.loc[pid, 'full_name'] if pid in runner_names.index else str(pid) for pid in matrix_clustered.index]
@@ -417,8 +417,8 @@ def _(kcore_sample):
             unique_signatures[_sig] = set()
         unique_signatures[_sig].add(_runner_id)
     unique_courses = sorted(kcore_sample['event_distance_id'].unique())
-    runner_names_1 = kcore_sample[['participant_id', 'firstname', 'lastname']].drop_duplicates('participant_id')
-    runner_names_1 = {row['participant_id']: f"{row['firstname']} {row['lastname']}" for _, row in runner_names_1.iterrows()}
+    runner_names_1 = kcore_sample[['participant_id', 'first_name', 'last_name']].drop_duplicates('participant_id')
+    runner_names_1 = {row['participant_id']: f"{row['first_name']} {row['last_name']}" for _, row in runner_names_1.iterrows()}
     race_names = kcore_sample[['event_distance_id', 'name']].drop_duplicates('event_distance_id')
     race_names = {row['event_distance_id']: row['name'] for _, row in race_names.iterrows()}
     print(f'Created {len(unique_signatures):,} super-nodes from {len(runner_signatures):,} runners')
