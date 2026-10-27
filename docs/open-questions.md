@@ -62,6 +62,11 @@ dropped and runner histories deferred with no plan):
 
 ## nb 1: finish times
 
+- **Terrain as a course covariate** (mirror schema 1.2): `courses.route_gain_m` / `route_loss_m` are
+  measured on a DEM from a matched GPS track. Gain per km would explain part of each course
+  effect, letting the remainder mean "harder than its terrain". Filter on `route_confidence`
+  (provisional values, being validated mirror-side) and skip `route_distance_disagrees`.
+
 - **No runner effect** [UltraSignup-e4o]: course effects absorb field strength (destination
   races attract atypical fields), and within-runner correlation understates uncertainty. Add a
   non-centered runner intercept (nb 3 model 2 has one).
