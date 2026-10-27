@@ -69,7 +69,7 @@ def _():
 
 @app.cell
 def _(filter_races_with_dnfs, load_results, process_results):
-    # preprocess data
+    # preprocess data: marathon and longer, editions that report their DNFs
 
     results = load_results()
     results = process_results(results)
@@ -85,9 +85,9 @@ def _(mo):
 
     ## What is a (α, β)-Core?
 
-    Think of ultramarathon data as a **bipartite graph**: one set of nodes represents runners, another represents courses (race-distance combinations), and edges connect runners to courses they've completed. An **(α, β)-core** is the largest subgraph where:
+    Think of ultramarathon data as a **bipartite graph**: one set of nodes represents runners, another represents courses (race-distance combinations), and edges connect runners to courses they've started (finished or DNF'd, in any year). Counting DNFs as edges matters: a finishes-only graph would keep runners who rarely drop and lose those who often do, biasing every DNF model downstream. An **(α, β)-core** is the largest subgraph where:
 
-    - Every **runner** has completed at least **α** different courses
+    - Every **runner** has started at least **α** different courses
     - Every **course** has at least **β** different runners
 
     The parameters α and β control the density-size tradeoff:
@@ -96,9 +96,9 @@ def _(mo):
 
     Finding the right balance is crucial. Too loose, and we retain too much sparsity for effective modeling. Too strict, and we throw away valuable data.
 
-    ### Breadth-First Exploration
+    ### Sweeping (α, β)
 
-    Rather than testing every possible (α, β) combination, we use an intelligent breadth-first search. Starting from minimal requirements, we incrementally tighten constraints and track how the subset evolves—measuring not just size, but also **completeness metrics** that indicate how representative the k-core remains of each runner's and course's full history.
+    Cores are nested: raising α or β only removes runners and courses. So the sweep walks β upward for each α, starting each core from the previous one, and stops when the core is empty. For every configuration it tracks how the subset evolves—measuring not just size, but also **completeness metrics** that indicate how representative the k-core remains of each runner's and course's full history.
     """)
     return
 
@@ -261,13 +261,13 @@ def _(candidates_df, go, pd, results):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Examining the (3, 840) K-Core
+    # Examining the (3, 500) K-Core
 
-    Based on our exploration, we select the **(α=3, β=840)** configuration for downstream modeling. This choice balances several considerations:
+    Based on our exploration, we select the **(α=3, β=500)** configuration for downstream modeling. This choice balances several considerations:
 
-    - **α=3**: Runners must have completed at least 3 different course types. This ensures we have enough repeated observations per runner to estimate individual ability, while not being so restrictive that we lose casual participants.
+    - **α=3**: Runners must have started at least 3 different courses. This ensures we have enough repeated observations per runner to estimate individual ability, while not being so restrictive that we lose casual participants.
 
-    - **β=840**: Courses must have at least 840 unique runners. This focuses on well-established events with substantial participation—races where we can reliably estimate course difficulty and where DNF reporting is likely to be consistent.
+    - **β=500**: Courses must have at least 500 distinct starters across their DNF-reporting editions. This focuses on well-established events with substantial participation, where we can reliably estimate course difficulty and DNF rates. It is close to the largest β that still leaves a core at α=3 (548).
 
     The resulting subset represents the **"core" ultramarathon community**: dedicated runners who return to the sport repeatedly, competing in popular events that form the backbone of the ultra calendar.
 
@@ -283,38 +283,50 @@ def _(mo):
     mo.md(r"""
     ## Building the Subset
 
-    We extract all results matching our k-core criteria and compute basic network statistics. The **degree** of a runner is the number of unique courses they've completed; the degree of a course is its number of unique finishers. These degree distributions tell us about the heterogeneity within our subset—are there a few "super-connectors" or is participation relatively uniform?
+    We extract all results matching our k-core criteria and compute basic network statistics. The **degree** of a runner is the number of distinct courses they've started; the degree of a course is its number of distinct starters, across all its editions. These degree distributions tell us about the heterogeneity within our subset—are there a few "super-connectors" or is participation relatively uniform?
     """)
     return
 
 
 @app.cell
 def _(results, subset_kcore_data):
-    # Create (3, 840) k-core subset
-    alpha, beta = 3, 840
+    # Build the (3, 500) subset
+    alpha, beta = 3, 500
 
-    # Ensure fresh copy without any previous course_id columns
-    results_clean = results.drop(columns=['course_id'], errors='ignore')
-    kcore_subset = subset_kcore_data(results_clean, alpha=alpha, beta=beta)
+    kcore_subset = subset_kcore_data(results, alpha=alpha, beta=beta)
     kcore_data = kcore_subset[kcore_subset['in_kcore']].copy()
 
-    # Get degree statistics
-    runner_degrees = kcore_data.groupby('participant_id').size()
-    course_degrees = kcore_data.groupby('event_distance_id').size()
+    # A course is `name` (the mirror's course_id) across all its editions; label it by its latest race name without the year
+    course_labels = (
+        kcore_data.sort_values('race_date').groupby('name')['race_name'].last()
+        .str.replace(r' \d{4} - ', ' - ', regex=True).to_dict()
+    )
 
-    # Use ALL runners in k-core (no sampling)
+    # Degrees: distinct courses per runner, distinct runners per course
+    runner_degrees = kcore_data.groupby('participant_id')['name'].nunique()
+    course_degrees = kcore_data.groupby('name')['participant_id'].nunique()
+
     kcore_sample = kcore_data.copy()
 
-    # Count edges (participation frequency per runner-course pair)
-    edge_counts = kcore_sample.groupby(['participant_id', 'event_distance_id']).size().reset_index(name='edge_weight')
+    # Starts per runner-course pair, summed over editions
+    edge_counts = kcore_sample.groupby(['participant_id', 'name']).size().reset_index(name='edge_weight')
 
-    print(f"K-core (α={alpha}, β={beta}) statistics:")
-    print(f"  Total courses: {kcore_data['event_distance_id'].nunique()}")
-    print(f"  Total runners: {kcore_data['participant_id'].nunique()}")
-    print(f"  Total results: {len(kcore_data):,}")
-    print(f"  Unique edges: {len(edge_counts)}")
-    print(f"  Max edge weight: {edge_counts['edge_weight'].max()}")
-    return alpha, beta, edge_counts, kcore_sample, runner_degrees
+    _model = kcore_subset[kcore_subset['in_kcore'] | kcore_subset['in_closure']]
+    print(f"K-core (α={alpha}, β={beta}):")
+    print(f"  Courses: {kcore_data['name'].nunique()} ({kcore_data['event_distance_id'].nunique()} editions, {kcore_data['year'].min()}-{kcore_data['year'].max()})")
+    print(f"  Core runners: {kcore_data['participant_id'].nunique():,}")
+    print(f"  Core results: {len(kcore_data):,}; with closure: {len(_model):,}")
+    print(f"  Runner-course edges: {len(edge_counts):,} (max starts per pair: {edge_counts['edge_weight'].max()})")
+    print(f"  DNF rate: core runners {1 - kcore_data['finished'].mean():.1%}, all starters at core courses {1 - _model['finished'].mean():.1%}")
+
+    return (
+        alpha,
+        beta,
+        course_labels,
+        edge_counts,
+        kcore_sample,
+        runner_degrees,
+    )
 
 
 @app.cell(hide_code=True)
@@ -336,24 +348,24 @@ def _(mo):
 
 
 @app.cell
-def _(alpha, beta, kcore_sample, pd, runner_degrees):
+def _(alpha, beta, course_labels, kcore_sample, pd, runner_degrees):
     import plotly.express as px
     from scipy.cluster.hierarchy import linkage, dendrogram
     from scipy.spatial.distance import pdist
     top_runners = runner_degrees.nlargest(100).index
     # Sample top 100 runners for adjacency matrix visualization
     kcore_matrix_sample = kcore_sample[kcore_sample['participant_id'].isin(top_runners)]
-    matrix_data = kcore_matrix_sample.groupby(['participant_id', 'event_distance_id'])['time_ms'].mean().reset_index()
+    matrix_data = kcore_matrix_sample.groupby(['participant_id', 'name'])['time_ms'].mean().reset_index()
     percentile_data = []
     # Create adjacency matrix with percentile finish times
-    for event_id in matrix_data['event_distance_id'].unique():
-        course_times = kcore_matrix_sample[kcore_matrix_sample['event_distance_id'] == event_id]['time_ms']
+    for event_id in matrix_data['name'].unique():
+        course_times = kcore_matrix_sample[kcore_matrix_sample['name'] == event_id]['time_ms']
     # Calculate percentile for each course
-        participant_times = matrix_data[matrix_data['event_distance_id'] == event_id].copy()
+        participant_times = matrix_data[matrix_data['name'] == event_id].copy()
         participant_times['percentile'] = participant_times['time_ms'].rank(pct=True) * 100
         percentile_data.append(participant_times)  # Get all finish times for this course
     percentile_df = pd.concat(percentile_data, ignore_index=True)
-    matrix = percentile_df.pivot(index='participant_id', columns='event_distance_id', values='percentile')
+    matrix = percentile_df.pivot(index='participant_id', columns='name', values='percentile')
     matrix_filled = matrix.fillna(matrix.median().median())  # Get participant times for this course
     row_linkage = linkage(pdist(matrix_filled, metric='euclidean'), method='ward')
     row_dendrogram = dendrogram(row_linkage, no_plot=True)
@@ -369,8 +381,7 @@ def _(alpha, beta, kcore_sample, pd, runner_degrees):
     matrix_clustered_with_names = matrix_clustered.copy()
     matrix_clustered_with_names.index = [runner_names.loc[pid, 'full_name'] if pid in runner_names.index else str(pid) for pid in matrix_clustered.index]
     # Fill NaN values with median for clustering (represents missing races)
-    race_info = kcore_matrix_sample[['event_distance_id', 'name']].drop_duplicates('event_distance_id').set_index('event_distance_id')
-    matrix_clustered_with_names.columns = [f"{race_info.loc[col, 'name'][:25]}... (ID:{col})" if len(race_info.loc[col, 'name']) > 25 else f"{race_info.loc[col, 'name']} (ID:{col})" for col in matrix_clustered_with_names.columns]
+    matrix_clustered_with_names.columns = [course_labels.get(col, str(col)) for col in matrix_clustered_with_names.columns]
     # Perform hierarchical clustering on rows (runners)
     _fig = px.imshow(matrix_clustered_with_names, aspect='auto', color_continuous_scale='Viridis', labels=dict(color='Percentile', x='Course', y='Runner'), title=f'Runner × Course Adjacency Matrix (α={alpha}, β={beta}, Top 100 Runners)<br><sub>Color = Percentile Finish Time (higher = slower) | Hierarchically Clustered</sub>')
     _fig.update_layout(width=1200, height=800, xaxis=dict(tickangle=-45, tickfont=dict(size=8), showgrid=False, showline=False, showticklabels=False, title=''), yaxis=dict(tickfont=dict(size=6), showgrid=False, showline=False, showticklabels=False, title=''), plot_bgcolor='white', paper_bgcolor='white')
@@ -406,21 +417,20 @@ def _(mo):
 
 
 @app.cell
-def _(kcore_sample):
+def _(course_labels, kcore_sample):
     runner_signatures = {}
     for _runner_id in kcore_sample['participant_id'].unique():
-        races = frozenset(kcore_sample[kcore_sample['participant_id'] == _runner_id]['event_distance_id'])
+        races = frozenset(kcore_sample[kcore_sample['participant_id'] == _runner_id]['name'])
         runner_signatures[_runner_id] = races
     unique_signatures = {}
     for _runner_id, _sig in runner_signatures.items():
         if _sig not in unique_signatures:
             unique_signatures[_sig] = set()
         unique_signatures[_sig].add(_runner_id)
-    unique_courses = sorted(kcore_sample['event_distance_id'].unique())
+    unique_courses = sorted(kcore_sample['name'].unique())
     runner_names_1 = kcore_sample[['participant_id', 'first_name', 'last_name']].drop_duplicates('participant_id')
     runner_names_1 = {row['participant_id']: f"{row['first_name']} {row['last_name']}" for _, row in runner_names_1.iterrows()}
-    race_names = kcore_sample[['event_distance_id', 'name']].drop_duplicates('event_distance_id')
-    race_names = {row['event_distance_id']: row['name'] for _, row in race_names.iterrows()}
+    race_names = course_labels
     print(f'Created {len(unique_signatures):,} super-nodes from {len(runner_signatures):,} runners')
     print(f'Average group size: {len(runner_signatures) / len(unique_signatures):.1f} runners per super-node')
     print(f'Largest group: {max((len(runners) for runners in unique_signatures.values()))} runners')
@@ -454,7 +464,7 @@ def _(
     course_to_idx = {course_id: idx for idx, course_id in enumerate(unique_courses)}
     for _, row in edge_counts.iterrows():
         _runner_id = row['participant_id']
-        course_id = row['event_distance_id']
+        course_id = row['name']
         if _runner_id in runner_to_super:
             super_idx = runner_to_super[_runner_id]
             course_idx = len(unique_signatures) + course_to_idx[course_id]
@@ -553,7 +563,7 @@ def _(mo):
 
     # Summary & Next Steps
 
-    We've successfully identified a densely-connected subset of the ultramarathon universe using k-core decomposition. The (3, 840)-core balances data retention with the connectivity needed for comparative inference, giving us a foundation for the modeling work ahead.
+    We've successfully identified a densely-connected subset of the ultramarathon universe using k-core decomposition. The (3, 500)-core balances data retention with the connectivity needed for comparative inference, giving us a foundation for the modeling work ahead.
 
     **Key takeaways:**
     - The full ultramarathon dataset is extremely sparse—most runners and courses share few direct connections
