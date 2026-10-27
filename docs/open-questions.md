@@ -47,10 +47,15 @@ on the 2025 scrape.
 - **Experience.** `results.runner_nth_race` (1 = debut) is a point-in-time covariate that does
   not leak the future, unlike the old `runner_rank` (the runner's *current* rank).
 
-Not in the mirror (v0.1.0); would need mirror work (entrant rosters, runner histories):
+Limited by the mirror's scope (it models only races that have happened; entrant rosters are
+dropped and runner histories deferred with no plan):
 
-- **DNS-aware modeling** from entrant rosters (registered field per race), for nb 2 and nb 4.
-- **Point-in-time runner strength** from per-race scores in runner histories.
+- **DNS-aware modeling** (nb 2, nb 4): there is no roster-based registered field. What exists
+  is `status = 'dns'` where a results page lists non-starters (4.1% of rows), `races.n_dns`
+  and `races.reports_dnfs`. Races that post no DNS rows stay unknown.
+- **Point-in-time runner strength:** no per-race score (`race_score` came from histories).
+  Compute it from `results` itself: each runner's prior finishes before `race_date`, with
+  `runner_nth_race`. `runners.current_rank` is a snapshot as of now and leaks the future.
 - **Hidden results**: about a third of editions show results only on runner pages and are
   absent from `results`. If hiding correlates with race type or organizer, course coverage is
   biased; `events.results_hidden` and `races.results_state = 'hidden'` let us measure that.
