@@ -37,8 +37,14 @@ KM_PER_MILE = 1.609344
 FINISHED_STATUSES = ("finished", "finished_small_field", "unofficial")
 DNF_STATUSES = ("dnf",)
 
-# Public results. Hidden results ("participant_history") arrive with the mirror's Phase 4
-# backfill (histories) and are opt-in; nothing from the 2025 scrape is imported.
+# Plausibility bounds for the model frame (the mirror does not clean posted values).
+MIN_AGE, MAX_AGE = 10, 95
+# min/mile: faster than a 5:00 mile is a timing error; slower than 60 min/mile (100 miles
+# in 100 hours) is a mistyped time, e.g. the 470 posted finishes over 14 days.
+MIN_PACE, MAX_PACE = 5, 60
+
+# The mirror serves only the public results: hidden results (about a third of editions,
+# shown only on runner pages) are not mirrored, and the 2025 scrape is not imported.
 DEFAULT_SOURCES = ("results_api",)
 
 RESULT_COLUMNS = (
@@ -67,9 +73,8 @@ def load_results(con: duckdb.DuckDBPyConnection | None = None, sources: Sequence
     con : DuckDB connection, optional
         A connection from utils.mirror.connect(). Defaults to a live connection.
     sources : sequence of str
-        Which result sources to include. Default: the public results API, the only source the
-        mirror serves so far. Once it adds "participant_history" (results only visible on
-        runners' pages, usually incomplete), include it explicitly.
+        Which result sources to include. The mirror only has "results_api" today; the
+        parameter stays so a later source can be opted into.
     """
     own = con is None
     con = con or mirror.connect()
@@ -113,15 +118,23 @@ def process_results(results: pd.DataFrame) -> pd.DataFrame:
     Build the model frame from load_results() output.
 
     Steps:
-    1. Keep M/F runners with a known age.
-    2. Keep running races with a fixed distance (drops fixed-time races and relays),
-       between 10K and 100 miles.
+    1. Keep M/F runners with a plausible known age (MIN_AGE to MAX_AGE).
+    2. Keep running races with a fixed distance (drops fixed-time races; relays are not in
+       main.results), between 10K and 100 miles. A NULL distance_km (kids' runs,
+       memberships, unparsed labels) drops the race.
     3. Keep starts that ended in a finish or a DNF (dns and dq are dropped).
-    4. Compute pace and drop finishers faster than 5 min/mile (data errors).
+    4. Compute pace and drop finishers outside MIN_PACE to MAX_PACE min/mile (data errors).
+
+    The mirror posts values as UltraSignup has them, never corrected (ages under 5 or
+    negative, finish times over 14 days), so these filters are the cleaning step.
     """
-    # course_id is NULL until the mirror has fetched the race's series (mid-backfill); such
-    # races have no course identity to pool on yet, so they are dropped.
-    results = results[results['gender'].isin(['M', 'F']) & results['age'].notna() & results['course_id'].notna()].copy()
+    # course_id is NULL until the mirror has fetched the race's series (a handful of new
+    # editions); such races have no course identity to pool on yet, so they are dropped.
+    results = results[
+        results['gender'].isin(['M', 'F'])
+        & results['age'].between(MIN_AGE, MAX_AGE)
+        & results['course_id'].notna()
+    ].copy()
     results = results[results['race_name'].map(is_running_race)]
     results = results[results['race_format'] == 'distance']
     results = results[results['status'].isin(FINISHED_STATUSES + DNF_STATUSES)]
@@ -135,7 +148,7 @@ def process_results(results: pd.DataFrame) -> pd.DataFrame:
 
     results['time_ms'] = (results['finish_time_s'] * 1000).where(results['finished'])
     results['pace_min_mi'] = (results['time_ms'] / 60000 / results['distance_miles']).where(results['finished'])
-    results = results[~results['finished'] | (results['pace_min_mi'] >= 5)]
+    results = results[~results['finished'] | results['pace_min_mi'].between(MIN_PACE, MAX_PACE)]
 
     results = results.rename(columns={'did': 'event_distance_id', 'runner_id': 'participant_id'})
     results['participant_id'] = results['participant_id'].astype(str)

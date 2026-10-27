@@ -31,7 +31,7 @@ def test_status_mapping_and_filters(mirror_con):
     assert race1.loc[["10", "11", "12"], "finished"].all()
     assert not race1.loc["13", "finished"]
     assert pd.isna(race1.loc["13", "time_ms"])
-    # dns, dq, unknown age, gender X and the 1-hour 50K are gone
+    # dns, dq, unknown or implausible age, gender X, the 1-hour and 15-day 50Ks are gone
     assert set(race1.index) == {"10", "11", "12", "13"}
     # fixed-time, bike, 5K and course-less races are gone; the 100-miler stays
     assert set(frame["event_distance_id"]) == {1, 2}
