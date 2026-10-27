@@ -1,536 +1,216 @@
-#!/usr/bin/env python3
 """
-K-Core Subset Selection for Two-Stage Bayesian Modeling
+(α, β)-core subset selection on the runner-course graph.
 
-This module provides k-core based data flagging with course-completion closure.
+Runners and courses form a bipartite graph with an edge wherever a runner started a course
+(finished or DNF'd it, in any year). The (α, β)-core is the largest subgraph in which every
+runner has started at least α of its courses and every course has at least β of its runners.
+Edges count starts, not finishes: a finishes-only graph keeps runners who rarely DNF and
+drops those who often do, which biases every DNF model fit on the core.
+
+Courses are keyed by (name, distance_miles); with the mirror, name is the course_id, so that
+is one key per course across all its editions.
 
 Usage:
-    from kcore_subsetting import subset_kcore_data, evaluate_all_kcore_candidates
-    
-    # Step 1: Explore parameter space to find optimal (α, β)
-    candidates = evaluate_all_kcore_candidates(results, max_entities=10000, verbose=True)
-    # ... analyze candidates, pick (α, β) ...
-    
-    # Step 2: Apply chosen (α, β) to flag data
-    results = subset_kcore_data(results, alpha=5, beta=25)
+    candidates = evaluate_all_kcore_candidates(results)       # sweep (α, β)
+    results = subset_kcore_data(results, alpha=3, beta=840)   # flag one choice
     model_data = results[results['in_kcore'] | results['in_closure']]
+
+The core is found by peeling on a sparse incidence matrix. Cores are nested (raising α or β
+only removes nodes), so the sweep starts each (α, β) from the core at the previous β, and
+every candidate's metrics are sparse reductions: the full sweep takes seconds, not the
+half hour the old networkx version needed.
 """
 
-import pandas as pd
-import networkx as nx
-from typing import Set, Tuple, List, Dict, Optional
-from collections import deque
-import time
+from __future__ import annotations
+
+import hashlib
 import pickle
-from pathlib import Path
 import shutil
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import scipy.sparse as sp
+
+CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "cache" / "kcore"
+# Bump when the graph definition or the metrics change, so old caches are not reused.
+CACHE_VERSION = 2
 
 
-def _format_ranges(values: Set[int], step: int = 1) -> str:
-    """
-    Convert set of integers to minimal dash-separated ranges.
-    
-    Examples:
-        {4, 5, 6, 10, 11, 20}, step=1 → "[4-6, 10-11, 20]"
-        {5}, step=1 → "[5]"
-        {1, 2, 3, 4}, step=1 → "[1-4]"
-        {30, 32, 34, 36, 38}, step=2 → "[30-38]" (just show overall range)
-    
-    Parameters
-    ----------
-    values : Set[int]
-        Set of integer values to format
-    step : int, default=1
-        Step size between consecutive values. If > 1, shows only min-max range.
-        
-    Returns
-    -------
-    str
-        Formatted string with minimal contiguous ranges
-    """
-    if not values:
-        return "[]"
-    
-    sorted_vals = sorted(values)
-    
-    # If step > 1, just show min-max range
-    if step > 1:
-        if len(sorted_vals) == 1:
-            return f"[{sorted_vals[0]}]"
-        return f"[{sorted_vals[0]}-{sorted_vals[-1]}]"
-    
-    # Original logic for step=1
-    ranges = []
-    start = sorted_vals[0]
-    end = sorted_vals[0]
-    
-    for val in sorted_vals[1:]:
-        if val == end + 1:
-            end = val  # Extend current range
-        else:
-            # Save current range and start new one
-            ranges.append(f"{start}-{end}" if start != end else str(start))
-            start = end = val
-    
-    # Don't forget the last range
-    ranges.append(f"{start}-{end}" if start != end else str(start))
-    
-    return "[" + ", ".join(ranges) + "]"
+@dataclass
+class _Graph:
+    runner_ids: np.ndarray      # participant_id per row of B
+    course_keys: pd.DataFrame   # name, distance_miles, course_id per column of B
+    B: sp.csr_matrix            # runners x courses, 1 where the runner started the course
+    W: sp.csr_matrix            # runners x courses, number of result rows
+    course_distance: np.ndarray
 
 
-def subset_kcore_data(
-    results: pd.DataFrame,
-    alpha: int,
-    beta: int
-) -> pd.DataFrame:
-    """
-    Flag race results using (α, β)-core decomposition with course-completion closure.
-    
-    This function identifies a densely-connected (α, β)-core of runners and courses,
-    then flags ALL participant results at k-core courses to enable complete
-    course-level modeling (course-completion closure).
-    
-    The method:
-    1. Build bipartite graph (runners ↔ courses) from finisher data
-    2. Find (α, β)-core where:
-       - Every runner participated in ≥ α k-core courses
-       - Every course had ≥ β k-core runners
-    3. Flag results:
-       - in_kcore: Both participant AND course are in the (α, β)-core
-       - in_closure: Course is in k-core, but participant is not (course completion)
-    
-    Course-completion closure strategy:
-    - K-core courses have 100% of their participants flagged (in_kcore OR in_closure)
-    - Provides complete participant lists for estimating course-specific DNF rates
-    - K-core runners may have incomplete race histories (some races outside k-core)
-    - No additional courses added beyond the (α, β)-core
-    
-    Parameters
-    ----------
-    results : pd.DataFrame
-        Processed results DataFrame with columns:
-        - participant_id: Unique runner identifier
-        - name: Course name
-        - finished: Boolean indicating finish status
-        - Additional columns preserved in output
-    alpha : int
-        Minimum number of k-core courses each k-core runner must have participated in.
-        Higher α = more selective runners = smaller, denser core.
-    beta : int
-        Minimum number of k-core runners each k-core course must have had.
-        Higher β = more selective courses = smaller, denser core.
-        
-    Returns
-    -------
-    pd.DataFrame
-        Full results dataset with two additional boolean columns:
-        - in_kcore: True if BOTH participant and course are in the (α, β)-core
-        - in_closure: True if course is in k-core but participant is not
-        - Results where neither flag is True are outside the k-core and closure
-        
-        Filter to modeling subset with:
-        >>> model_data = results[results['in_kcore'] | results['in_closure']]
-        
-        Or filter to just k-core entities:
-        >>> kcore_only = results[results['in_kcore']]
-        
-    Notes
-    -----
-    (α, β)-core properties:
-    - Asymmetric thresholds allow independent control of runner/course selectivity
-    - Smaller α or β = larger core, less dense
-    - Larger α or β = smaller core, more dense
-    - Use evaluate_all_kcore_candidates() to explore the parameter space
-    
-    Course-completion closure properties:
-    - Every k-core course has ALL its participants in the flagged data
-    - Enables unbiased estimation of course-specific DNF rates
-    - K-core runners may be missing some of their race results
-    - Total flagged data = k-core results + course-completion results
-    
-    Typical workflow:
-    1. Use evaluate_all_kcore_candidates() to find optimal (α, β) via Pareto analysis
-    2. Apply chosen (α, β) with this function to flag the data
-    3. Stage 1 MCMC: Model k-core entities (in_kcore=True) with full convergence
-    4. Stage 2 MAP: Model all flagged data, fixing k-core params from Stage 1
-    
-    Examples
-    --------
-    After exploring parameter space in kcore_optimization notebook:
-    
-    >>> # Apply optimal (α, β) chosen from Pareto frontier
-    >>> results = subset_kcore_data(results, alpha=5, beta=25)
-    >>> 
-    >>> # Filter to k-core + closure for modeling
-    >>> model_data = results[results['in_kcore'] | results['in_closure']]
-    >>> 
-    >>> # Check composition
-    >>> print(f"K-core results: {results['in_kcore'].sum():,}")
-    >>> print(f"Closure results: {results['in_closure'].sum():,}")
-    >>> print(f"K-core courses: {results[results['in_kcore']]['name'].nunique():,}")
-    >>> print(f"K-core runners: {results[results['in_kcore']]['participant_id'].nunique():,}")
-    """
-    # Build bipartite graph from finisher data
-    # CRITICAL: Create course_id AFTER filtering to finishers (same as evaluate_all_kcore_candidates)
-    finishers = results[results['finished']].copy()
-    runners = set(finishers['participant_id'].unique())
-    
-    finishers['course_id'] = finishers.groupby(['name', 'distance_miles']).ngroup()
-    courses = set(finishers['course_id'].unique())
-    
-    # Build graph
-    G = nx.Graph()
-    G.add_nodes_from([(f'r_{r}', {'bipartite': 0}) for r in runners])
-    G.add_nodes_from([(f'c_{c}', {'bipartite': 1}) for c in courses])
-    
-    # Vectorized edge creation (3-5x faster than iterrows)
-    edges = [(f'r_{pid}', f'c_{cid}') 
-             for pid, cid in zip(finishers['participant_id'], finishers['course_id'])]
-    G.add_edges_from(edges)
-    
-    # Find (α, β)-core
-    kcore_runners, kcore_courses = _find_alpha_beta_core(G, runners, courses, alpha, beta)
-    
-    # Map course_id from finishers to full results DataFrame
-    # CRITICAL: Use merge to preserve exact same course_id values from graph
-    course_id_map = finishers[['name', 'distance_miles', 'course_id']].drop_duplicates()
-    # Caller may already have a 'course_id' column with a different convention
-    # (e.g., notebooks/4_unobserved_dnfs uses a string id "name||distance"). Drop
-    # it before merging so we get a clean integer course_id rather than the
-    # auto-suffixed course_id_x/course_id_y pandas would otherwise produce.
-    if 'course_id' in results.columns:
-        results = results.drop(columns=['course_id'])
-    results = results.merge(course_id_map, on=['name', 'distance_miles'], how='left')
-    
-    # Course-completion closure: ALL participants at k-core courses
-    kcore_course_ids = [int(c.split('_')[1]) for c in kcore_courses]
-    
-    # Flag results - keep as strings to match DataFrame dtype
-    kcore_runner_ids = [r.split('_')[1] for r in kcore_runners]
-    
-    results['in_kcore'] = (
-        results['participant_id'].isin(kcore_runner_ids) &
-        results['course_id'].isin(kcore_course_ids)
+def _build_graph(results: pd.DataFrame) -> _Graph:
+    """Incidence matrices over every start in `results` (process_results keeps only
+    finishes and DNFs, so every row is a start)."""
+    course_codes, course_index = pd.MultiIndex.from_frame(results[['name', 'distance_miles']]).factorize()
+    runner_codes, runner_ids = pd.factorize(results['participant_id'])
+    n_r, n_c = len(runner_ids), len(course_index)
+    W = sp.csr_matrix(
+        (np.ones(len(results), dtype=np.int32), (runner_codes, course_codes)), shape=(n_r, n_c)
     )
-    
-    results['in_closure'] = (
-        results['course_id'].isin(kcore_course_ids) &
-        ~results['participant_id'].isin(kcore_runner_ids)
+    W.sum_duplicates()
+    B = W.copy()
+    B.data[:] = 1
+    course_keys = course_index.to_frame(index=False, name=['name', 'distance_miles'])
+    course_keys['course_id'] = np.arange(n_c)
+    return _Graph(np.asarray(runner_ids), course_keys, B, W, course_keys['distance_miles'].to_numpy())
+
+
+def _peel(B: sp.csr_matrix, rows: np.ndarray, cols: np.ndarray, alpha: int, beta: int) -> tuple[np.ndarray, np.ndarray]:
+    """The (α, β)-core of B restricted to `rows` x `cols`, as index arrays into B."""
+    sub = B[rows][:, cols]
+    while rows.size and cols.size:
+        keep_r = np.asarray(sub.sum(axis=1)).ravel() >= alpha
+        rows, sub = rows[keep_r], sub[keep_r]
+        keep_c = np.asarray(sub.sum(axis=0)).ravel() >= beta
+        cols, sub = cols[keep_c], sub[:, keep_c]
+        if keep_r.all() and keep_c.all():
+            break
+    if not (rows.size and cols.size):
+        return rows[:0], cols[:0]
+    return rows, cols
+
+
+def _metrics(g: _Graph, rows: np.ndarray, cols: np.ndarray) -> dict:
+    B_c = g.B[:, cols]  # every runner at the core courses
+    W_c = g.W[:, cols]
+    runners_at_core_courses = np.flatnonzero(B_c.getnnz(axis=1))
+    in_core = np.zeros(g.B.shape[0], dtype=bool)
+    in_core[rows] = True
+    closure_runners = int((~in_core[runners_at_core_courses]).sum())
+
+    total_results = int(W_c.sum())
+    kcore_results = int(W_c[rows].sum())
+
+    # Runner completeness: share of each core runner's courses that are core courses.
+    runner_completeness = B_c[rows].getnnz(axis=1) / g.B[rows].getnnz(axis=1)
+    # Course completeness: share of each core course's runners who are core runners.
+    course_completeness = B_c[rows].getnnz(axis=0) / B_c.getnnz(axis=0)
+
+    n_r, n_c = len(rows), len(cols)
+    total_entities = n_r + n_c + closure_runners
+    return {
+        'kcore_runners': n_r,
+        'kcore_courses': n_c,
+        'closure_runners': closure_runners,
+        'total_entities': total_entities,
+        'kcore_results': kcore_results,
+        'closure_results': total_results - kcore_results,
+        'total_results': total_results,
+        'density': total_results / total_entities,
+        'num_distances': int(np.unique(g.course_distance[cols]).size),
+        'runner_course_ratio': (n_r + closure_runners) / n_c,
+        'avg_runner_completeness': float(runner_completeness.mean() * 100),
+        'avg_course_completeness': float(course_completeness.mean() * 100),
+    }
+
+
+def subset_kcore_data(results: pd.DataFrame, alpha: int, beta: int) -> pd.DataFrame:
+    """
+    Flag results by the (α, β)-core, with course-completion closure.
+
+    Returns `results` with two boolean columns:
+    - in_kcore: the runner and the course are both in the core
+    - in_closure: the course is in the core but the runner is not. Every start at a core
+      course is flagged one way or the other, so course-level DNF rates see the full field.
+
+    Model on `results[results['in_kcore'] | results['in_closure']]`.
+    """
+    g = _build_graph(results)
+    rows, cols = _peel(g.B, np.arange(g.B.shape[0]), np.arange(g.B.shape[1]), alpha, beta)
+    core_runners = set(g.runner_ids[rows])
+    core_courses = g.course_keys.iloc[cols][['name', 'distance_miles']]
+    at_core_course = (
+        pd.MultiIndex.from_frame(results[['name', 'distance_miles']])
+        .isin(pd.MultiIndex.from_frame(core_courses))
     )
-    
-    # Drop the temporary course_id column
-    results = results.drop(columns=['course_id'])
-    
+    core_runner = results['participant_id'].isin(core_runners).to_numpy()
+    results = results.copy()
+    results['in_kcore'] = at_core_course & core_runner
+    results['in_closure'] = at_core_course & ~core_runner
     return results
+
+
+def _fingerprint(results: pd.DataFrame) -> str:
+    """Hash of the graph's inputs, so a cached sweep is never reused on different data."""
+    h = pd.util.hash_pandas_object(results[['participant_id', 'name', 'distance_miles']], index=False)
+    return hashlib.sha1(h.to_numpy().tobytes()).hexdigest()[:12]
 
 
 def evaluate_all_kcore_candidates(
     results: pd.DataFrame,
-    max_entities: int,
+    max_entities: int | None = None,
     min_alpha: int = 2,
     min_beta: int = 10,
     beta_step: int = 1,
     verbose: bool = True,
     use_cache: bool = True,
-    clear_cache: bool = False
+    clear_cache: bool = False,
 ) -> pd.DataFrame:
     """
-    Evaluate all (α, β) combinations using BFS to find Pareto frontier.
-    
-    Parameters
-    ----------
-    results : pd.DataFrame
-        Results DataFrame with participant_id, name, finished, distance_miles
-    max_entities : int
-        Maximum total entities (runners + courses) budget
-    min_alpha : int, default=2
-        Minimum α threshold to explore
-    min_beta : int, default=10
-        Minimum β threshold to explore
-    beta_step : int, default=1
-        Step size for β increments during exploration.
-        - beta_step=1: Explore every β value (default, finest granularity)
-        - beta_step=2: Explore every other β value (2x faster, coarser)
-        - beta_step=5: Explore every 5th β value (5x faster, coarsest)
-        Use larger values for quick initial exploration, then refine with beta_step=1.
-    verbose : bool, default=True
-        Print progress during exploration
-    use_cache : bool, default=True
-        If True, load results from cache if available and save results to cache.
-        Cache key is based on max_entities, min_alpha, min_beta, and beta_step.
-    clear_cache : bool, default=False
-        If True, delete all cached k-core candidate files before running.
-        Useful for forcing fresh computation.
-        
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame of candidate configurations with metrics
-        
-    Examples
-    --------
-    # Quick coarse exploration with large beta steps
-    >>> candidates_coarse = evaluate_all_kcore_candidates(
-    ...     results, max_entities=5000, min_beta=30, beta_step=10
-    ... )
-    
-    # Fine-grained search around interesting region
-    >>> candidates_fine = evaluate_all_kcore_candidates(
-    ...     results, max_entities=5000, min_beta=50, beta_step=1
-    ... )
+    Every (α, β) from (min_alpha, min_beta) upward whose core is non-empty, with size and
+    completeness metrics, one row per configuration.
+
+    max_entities drops configurations whose core plus closure exceeds that many runners and
+    courses. The cache key includes a fingerprint of the data, so a new pull or a changed
+    filter recomputes rather than loading a stale sweep.
     """
-    # Setup cache directory and key
-    cache_dir = Path(__file__).parent.parent / "data" / "cache" / "kcore"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Handle cache clearing
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
     if clear_cache:
-        if cache_dir.exists():
-            shutil.rmtree(cache_dir)
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            if verbose:
-                print("🗑️  Cleared k-core cache directory")
-    
-    # Generate cache key from parameters
-    cache_key = f"candidates_maxent{max_entities}_alpha{min_alpha}_beta{min_beta}_step{beta_step}"
-    cache_file = cache_dir / f"{cache_key}.pkl"
-    
-    # Check cache
+        shutil.rmtree(CACHE_DIR)
+        CACHE_DIR.mkdir(parents=True)
+    key = (
+        f"candidates_v{CACHE_VERSION}_{_fingerprint(results)}"
+        f"_maxent{max_entities}_alpha{min_alpha}_beta{min_beta}_step{beta_step}"
+    )
+    cache_file = CACHE_DIR / f"{key}.pkl"
     if use_cache and cache_file.exists():
         if verbose:
-            print(f"✅ Loading cached k-core candidates from {cache_file.name}")
-        with open(cache_file, 'rb') as f:
-            return pickle.load(f)
-    
-    # Build graph once
-    finishers = results[results['finished']].copy()
-    runners = set(finishers['participant_id'].unique())
-    
-    finishers['course_id'] = finishers.groupby(['name', 'distance_miles']).ngroup()
-    courses = set(finishers['course_id'].unique())
-    
-    G = nx.Graph()
-    G.add_nodes_from([(f'r_{r}', {'bipartite': 0}) for r in runners])
-    G.add_nodes_from([(f'c_{c}', {'bipartite': 1}) for c in courses])
-    
-    # Vectorized edge creation (3-5x faster than iterrows)
-    edges = [(f'r_{pid}', f'c_{cid}') 
-             for pid, cid in zip(finishers['participant_id'], finishers['course_id'])]
-    G.add_edges_from(edges)
-    
+            print(f"Loading cached k-core candidates from {cache_file.name}")
+        return pd.read_pickle(cache_file)
+
+    start = time.time()
+    g = _build_graph(results)
     if verbose:
-        print(f"Built graph: {len(runners):,} runners, {len(courses):,} courses")
-        print(f"Starting BFS exploration from ({min_alpha}, {min_beta})...")
-    
-    # BFS exploration with core caching for incremental computation
+        print(f"Graph: {g.B.shape[0]:,} runners, {g.B.shape[1]:,} courses, {g.B.nnz:,} runner-course edges")
+
     candidates = []
-    visited = set()
-    core_cache = {}  # Cache computed cores for reuse
-    queue = deque([(min_alpha, min_beta)])  # Use deque for O(1) popleft
-    
-    while queue:
-        alpha, beta = queue.popleft()  # O(1) deque operation
-        
-        if (alpha, beta) in visited:
-            continue
-        visited.add((alpha, beta))
-        
-        # Try to use cached core from parent (α-1, β) or (α, β-1) for incremental computation
-        initial_runners = None
-        initial_courses = None
-        
-        # Prefer (α-1, β) as starting point (guaranteed subset)
-        if (alpha - 1, beta) in core_cache:
-            initial_runners, initial_courses = core_cache[(alpha - 1, beta)]
-        # Fall back to (α, β-1) if available
-        elif (alpha, beta - 1) in core_cache:
-            initial_runners, initial_courses = core_cache[(alpha, beta - 1)]
-        
-        # Find core with timing (incremental if parent available)
-        core_start = time.time()
-        kcore_runners, kcore_courses = _find_alpha_beta_core(
-            G, runners, courses, alpha, beta,
-            initial_runners=initial_runners,
-            initial_courses=initial_courses
-        )
-        core_time = time.time() - core_start
-        
-        # Cache this core for future incremental computations
-        if kcore_runners and kcore_courses:
-            core_cache[(alpha, beta)] = (kcore_runners.copy(), kcore_courses.copy())
-        
-        if not kcore_runners or not kcore_courses:
-            continue
-        
-        # Course-completion closure
-        kcore_course_ids = [int(c.split('_')[1]) for c in kcore_courses]
-        
-        closure_df = finishers[finishers['course_id'].isin(kcore_course_ids)]
-        kcore_runner_ids = [str(int(r.split('_')[1])) for r in kcore_runners]  # Convert to string to match DataFrame
-        
-        closure_runners = set(closure_df['participant_id'].unique()) - set(kcore_runner_ids)
-        
-        total_entities = len(kcore_runners) + len(kcore_courses) + len(closure_runners)
-        
-        if max_entities is not None and total_entities > max_entities:
-            continue
-        
-        # Calculate metrics
-        kcore_results = len(closure_df[closure_df['participant_id'].isin(kcore_runner_ids)])
-        closure_results = len(closure_df[closure_df['participant_id'].isin(closure_runners)])
-        
-        # Runner completeness: averaged across k-core runners, what % of their total courses are k-core
-        runner_total_courses = finishers[finishers['participant_id'].isin(kcore_runner_ids)].groupby('participant_id')['course_id'].nunique()
-        runner_kcore_courses = closure_df[closure_df['participant_id'].isin(kcore_runner_ids)].groupby('participant_id')['course_id'].nunique()
-        avg_runner_completeness = (runner_kcore_courses / runner_total_courses * 100).mean()
-        
-        # Course completeness: averaged across k-core courses, what % of their total runners are k-core
-        course_all_runners = closure_df.groupby('course_id')['participant_id'].nunique()
-        course_kcore_runners = closure_df[closure_df['participant_id'].isin(kcore_runner_ids)].groupby('course_id')['participant_id'].nunique()
-        avg_course_completeness = (course_kcore_runners / course_all_runners * 100).mean()
-        
-        candidate = {
-            'alpha': alpha,
-            'beta': beta,
-            'kcore_runners': len(kcore_runners),
-            'kcore_courses': len(kcore_courses),
-            'closure_runners': len(closure_runners),
-            'total_entities': total_entities,
-            'kcore_results': kcore_results,
-            'closure_results': closure_results,
-            'total_results': kcore_results + closure_results,
-            'density': (kcore_results + closure_results) / total_entities if total_entities > 0 else 0,
-            'num_distances': len(closure_df['distance_miles'].unique()),
-            'runner_course_ratio': (len(kcore_runners) + len(closure_runners)) / len(kcore_courses) if len(kcore_courses) > 0 else 0,
-            'avg_runner_completeness': avg_runner_completeness,
-            'avg_course_completeness': avg_course_completeness
-        }
-        
-        candidate['core_time_ms'] = core_time * 1000  # Store timing
-        candidates.append(candidate)
-        
-        # Expand search
-        if (alpha + 1, beta) not in visited:
-            queue.append((alpha + 1, beta))
-        if (alpha, beta + beta_step) not in visited:
-            queue.append((alpha, beta + beta_step))
-        
-        # In-place status update - show current frontier (queue contents)
+    rows_a, cols_a = np.arange(g.B.shape[0]), np.arange(g.B.shape[1])
+    alpha = min_alpha
+    while True:
+        # Core at (α, min_beta), from the core at (α - 1, min_beta).
+        rows_a, cols_a = _peel(g.B, rows_a, cols_a, alpha, min_beta)
+        if not rows_a.size:
+            break
+        rows, cols, beta = rows_a, cols_a, min_beta
+        while rows.size:
+            t = time.time()
+            rows, cols = _peel(g.B, rows, cols, alpha, beta)
+            if not rows.size:
+                break
+            m = _metrics(g, rows, cols)
+            if max_entities is None or m['total_entities'] <= max_entities:
+                candidates.append({'alpha': alpha, 'beta': beta, **m, 'core_time_ms': (time.time() - t) * 1000})
+            beta += beta_step
         if verbose:
-            # Extract alpha and beta values from current queue
-            frontier_alphas = {a for a, b in queue}
-            frontier_betas = {b for a, b in queue}
-            alpha_str = _format_ranges(frontier_alphas, step=1) if frontier_alphas else f"[{alpha}]"
-            beta_str = _format_ranges(frontier_betas, step=beta_step) if frontier_betas else f"[{beta}]"
-            expansion_rate = len(candidates) / len(visited) if len(visited) > 0 else 0
-            print(f"\rExploring α={alpha_str}, β={beta_str} | Visited: {len(visited)} | Valid: {len(candidates)} | Expansion: {expansion_rate:.1%} | Queue: {len(queue)} | entities={total_entities:,} courses={len(kcore_courses):,} runners={len(kcore_runners) + len(closure_runners):,} | {core_time*1000:.0f}ms", end='', flush=True)
-    
+            print(f"\rα={alpha}: β up to {beta - beta_step} | {len(candidates):,} configurations | {time.time() - start:.0f}s", end='', flush=True)
+        alpha += 1
     if verbose:
-        print()  # New line after in-place updates
-        print(f"Explored {len(visited)} (α, β) combinations")
-        print(f"Found {len(candidates)} valid configurations")
-    
-    # Convert to DataFrame and add computed columns for analysis
+        print(f"\nFound {len(candidates):,} configurations in {time.time() - start:.1f}s")
+
     df = pd.DataFrame(candidates)
-    
     if not df.empty:
-        # Add columns expected by downstream analysis
         df['n_courses'] = df['kcore_courses']
         df['n_participants'] = df['kcore_runners'] + df['closure_runners']
-    
-    # Save to cache
-    if use_cache and not df.empty:
-        with open(cache_file, 'wb') as f:
-            pickle.dump(df, f)
-        if verbose:
-            print(f"💾 Cached k-core candidates to {cache_file.name}")
-    
+        if use_cache:
+            df.to_pickle(cache_file)
     return df
-
-
-def _find_alpha_beta_core(
-    G: nx.Graph,
-    runners: Set,
-    courses: Set,
-    alpha: int,
-    beta: int,
-    initial_runners: Optional[Set[str]] = None,
-    initial_courses: Optional[Set[str]] = None
-) -> Tuple[Set[str], Set[str]]:
-    """
-    Find (α, β)-core where runners have ≥α courses, courses have ≥β runners.
-    
-    Optimized with queue-based pruning and cached degree tracking:
-    - Pre-computes degrees once instead of querying neighbors repeatedly
-    - Only processes nodes affected by removals (queue-based)
-    - Supports incremental computation from a previous core (5-10x faster)
-    - Expected 10-20x speedup vs iterative full-graph scans
-    
-    Parameters
-    ----------
-    initial_runners : Set[str], optional
-        Start from this subset of runners (e.g., previous core with lower α)
-    initial_courses : Set[str], optional
-        Start from this subset of courses (e.g., previous core with lower β)
-    """
-    # Use initial cores if provided (incremental mode), otherwise start with full graph
-    if initial_runners is not None:
-        kcore_runners = initial_runners.copy()
-    else:
-        kcore_runners = set([f'r_{r}' for r in runners])
-    
-    if initial_courses is not None:
-        kcore_courses = initial_courses.copy()
-    else:
-        kcore_courses = set([f'c_{c}' for c in courses])
-    
-    # Pre-compute degrees (cached - avoids repeated neighbor queries)
-    runner_degrees = {}
-    for r in kcore_runners:
-        neighbors = [c for c in G.neighbors(r) if c in kcore_courses]
-        runner_degrees[r] = len(neighbors)
-    
-    course_degrees = {}
-    for c in kcore_courses:
-        neighbors = [r for r in G.neighbors(c) if r in kcore_runners]
-        course_degrees[c] = len(neighbors)
-    
-    # Initialize removal queue with nodes that violate thresholds
-    removal_queue = deque()
-    for r in kcore_runners:
-        if runner_degrees[r] < alpha:
-            removal_queue.append(('runner', r))
-    for c in kcore_courses:
-        if course_degrees[c] < beta:
-            removal_queue.append(('course', c))
-    
-    # Queue-based pruning: only process affected nodes
-    while removal_queue:
-        node_type, node = removal_queue.popleft()
-        
-        if node_type == 'runner':
-            if node not in kcore_runners:
-                continue
-            kcore_runners.remove(node)
-            del runner_degrees[node]
-            
-            # Update degrees of connected courses and queue if needed
-            for c in G.neighbors(node):
-                if c in course_degrees:
-                    course_degrees[c] -= 1
-                    if course_degrees[c] < beta:
-                        removal_queue.append(('course', c))
-        else:  # course
-            if node not in kcore_courses:
-                continue
-            kcore_courses.remove(node)
-            del course_degrees[node]
-            
-            # Update degrees of connected runners and queue if needed
-            for r in G.neighbors(node):
-                if r in runner_degrees:
-                    runner_degrees[r] -= 1
-                    if runner_degrees[r] < alpha:
-                        removal_queue.append(('runner', r))
-    
-    return kcore_runners, kcore_courses
