@@ -68,5 +68,5 @@ def test_live_connect_load_and_pull(quack_server, monkeypatch, tmp_path):
 
     pulled = mirror.pull(dest=tmp_path / "pulled.duckdb")
     local = mirror.connect(local=True, path=pulled)
-    assert local.execute("SELECT count(*) FROM results").fetchone()[0] == 21
+    assert local.execute("SELECT count(*) FROM results").fetchone()[0] == 22
     local.close()

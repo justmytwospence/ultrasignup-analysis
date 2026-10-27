@@ -69,4 +69,7 @@ def test_live_mirror_contract():
     con.close()
     assert statuses <= {"finished", "finished_small_field", "unofficial", "dnf", "dns", "dq", None}
     assert formats <= {"distance", "fixed_time", "relay", None}
+    sample[["virtual", "cancelled"]] = False
     assert len(process_results(sample)) > 0
+    races = {r[0] for r in mirror.connect().execute("DESCRIBE races").fetchall()}
+    assert {"did", "virtual", "cancelled"} <= races

@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 SCHEMA = """
 CREATE TABLE about (schema_version VARCHAR, snapshot_at TIMESTAMP);
 CREATE TABLE courses (course_id VARCHAR, series_name VARCHAR, distance_km DOUBLE);
-CREATE TABLE races (did INTEGER, course_id VARCHAR, race_name VARCHAR, race_date DATE, distance_km DOUBLE, race_format VARCHAR);
+CREATE TABLE races (did INTEGER, course_id VARCHAR, race_name VARCHAR, race_date DATE, distance_km DOUBLE, race_format VARCHAR, virtual BOOLEAN, cancelled BOOLEAN);
 CREATE TABLE runners (runner_id INTEGER, first_name VARCHAR, last_name VARCHAR);
 CREATE TABLE events (event_id INTEGER, series_id INTEGER, event_name VARCHAR);
 CREATE TABLE relay_results (did INTEGER, team_name VARCHAR);
@@ -54,6 +54,8 @@ RESULTS = [
     (4, 10, "400-100k", "Gravel Grinder - 100K Ride", 100.0, "distance", "M", 30, "finished", 4 * 3600, "results_api"),
     (5, 10, "500-5k", "Fun Run - 5K", 5.0, "distance", "M", 30, "finished", 1500, "results_api"),
     (8, 10, "800-kids", "Trail Fest - Kids Run", None, "distance", "M", 30, "finished", 1500, "results_api"),
+    # A virtual edition (races.virtual)
+    (9, 10, "900-50k", "Lockdown 50K - 50K", 50.0, "distance", "M", 30, "finished", 5 * 3600, "results_api"),
     # No course identity yet (series unknown): dropped
     (7, 10, None, "Mystery Run - 50K", 50.0, "distance", "M", 30, "finished", 5 * 3600, "results_api"),
     # A non-default source: excluded unless asked for
@@ -69,7 +71,7 @@ def build_mirror(path: Path, schema_version: str = "1.0") -> Path:
         "INSERT INTO results VALUES (?, ?, ?, ?, DATE '2025-06-01', 2025, ?, ?, ?, ?, ?, ?, ?)",
         RESULTS,
     )
-    con.execute("INSERT INTO races SELECT DISTINCT did, course_id, race_name, race_date, distance_km, race_format FROM results")
+    con.execute("INSERT INTO races SELECT DISTINCT did, course_id, race_name, race_date, distance_km, race_format, did = 9, false FROM results")
     con.close()
     return path
 

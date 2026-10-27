@@ -66,7 +66,9 @@ RESULT_COLUMNS = (
 
 def load_results(con: duckdb.DuckDBPyConnection | None = None, sources: Sequence[str] = DEFAULT_SOURCES) -> pd.DataFrame:
     """
-    Load results from the mirror's `main.results`.
+    Load results from the mirror's `main.results`, plus the `virtual` and `cancelled` flags
+    of their races (fetched separately and merged here: Quack cannot stream two remote
+    tables in one query).
 
     Parameters
     ----------
@@ -82,7 +84,12 @@ def load_results(con: duckdb.DuckDBPyConnection | None = None, sources: Sequence
         # Literals, not bound parameters: parameters do not travel through CONNECT to the
         # remote (DuckDB 2.0.0 raises "Values were not provided").
         source_list = ", ".join("'" + s.replace("'", "''") + "'" for s in sources)
-        return con.execute(f"SELECT {', '.join(RESULT_COLUMNS)} FROM results WHERE source IN ({source_list})").df()
+        results = con.execute(f"SELECT {', '.join(RESULT_COLUMNS)} FROM results WHERE source IN ({source_list})").df()
+        flags = con.execute("SELECT did, virtual, cancelled FROM races").df()
+        results = results.merge(flags, on="did", how="left")
+        for flag in ("virtual", "cancelled"):
+            results[flag] = results[flag].fillna(False).astype(bool)
+        return results
     finally:
         if own:
             con.close()
@@ -119,7 +126,7 @@ def process_results(results: pd.DataFrame) -> pd.DataFrame:
 
     Steps:
     1. Keep M/F runners with a plausible known age (MIN_AGE to MAX_AGE).
-    2. Keep running races with a fixed distance (drops fixed-time races; relays are not in
+    2. Keep running races (not virtual or cancelled) with a fixed distance (drops fixed-time races; relays are not in
        main.results), between 10K and 100 miles. A NULL distance_km (kids' runs,
        memberships, unparsed labels) drops the race.
     3. Keep starts that ended in a finish or a DNF (dns and dq are dropped).
@@ -135,7 +142,12 @@ def process_results(results: pd.DataFrame) -> pd.DataFrame:
         & results['age'].between(MIN_AGE, MAX_AGE)
         & results['course_id'].notna()
     ].copy()
-    results = results[results['race_name'].map(is_running_race)]
+    # Virtual and cancelled-but-posted races are not comparable to the real event.
+    results = results[~results['virtual'] & ~results['cancelled']]
+    # Classify each distinct name once (about 60k names vs millions of rows).
+    names = results['race_name'].drop_duplicates()
+    running = dict(zip(names, names.map(is_running_race)))
+    results = results[results['race_name'].map(running)]
     results = results[results['race_format'] == 'distance']
     results = results[results['status'].isin(FINISHED_STATUSES + DNF_STATUSES)]
 
