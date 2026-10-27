@@ -17,7 +17,7 @@ turns them into the model frame every notebook consumes. Its column contract is:
     finished            True for finishers, False for DNFs
     pace_min_mi         finisher pace
     gender, age
-plus pass-through context: first_name, last_name, course_id, race_name, race_date, year, distance_km, status, source.
+plus pass-through context: reports_dnfs, virtual, cancelled, first_name, last_name, course_id, race_name, race_date, year, distance_km, status, source.
 """
 
 from __future__ import annotations
@@ -68,8 +68,8 @@ RESULT_COLUMNS = (
 
 def load_results(con: duckdb.DuckDBPyConnection | None = None, sources: Sequence[str] = DEFAULT_SOURCES) -> pd.DataFrame:
     """
-    Load results from the mirror's `main.results`, plus the `virtual` and `cancelled` flags
-    of their races (fetched separately and merged here: Quack cannot stream two remote
+    Load results from the mirror's `main.results`, plus the `virtual`, `cancelled` and
+    `reports_dnfs` flags of their races (fetched separately and merged here: Quack cannot stream two remote
     tables in one query).
 
     Parameters
@@ -87,9 +87,9 @@ def load_results(con: duckdb.DuckDBPyConnection | None = None, sources: Sequence
         # remote (DuckDB 2.0.0 raises "Values were not provided").
         source_list = ", ".join("'" + s.replace("'", "''") + "'" for s in sources)
         results = con.execute(f"SELECT {', '.join(RESULT_COLUMNS)} FROM results WHERE source IN ({source_list})").df()
-        flags = con.execute("SELECT did, virtual, cancelled FROM races").df()
+        flags = con.execute("SELECT did, virtual, cancelled, reports_dnfs FROM races").df()
         results = results.merge(flags, on="did", how="left")
-        for flag in ("virtual", "cancelled"):
+        for flag in ("virtual", "cancelled", "reports_dnfs"):
             results[flag] = results[flag].fillna(False).astype(bool)
         return results
     finally:
@@ -173,11 +173,12 @@ def process_results(results: pd.DataFrame) -> pd.DataFrame:
 
 def filter_races_with_dnfs(results: pd.DataFrame) -> pd.DataFrame:
     """
-    Keep only courses with at least one DNF.
+    Keep only race editions that report their DNFs (the mirror's races.reports_dnfs: the
+    results page lists DNF or DNS rows).
 
-    Courses with no DNFs at all may be courses whose results never report DNFs, which
-    would bias the DNF models.
+    An edition that posts only finishers shows zero DNFs whether or not anyone dropped, so
+    it would bias every DNF model. This is per edition, not per course: 43% of editions at
+    courses with some DNF never posted any, and the DNF rate among reporting editions is
+    nearly twice the naive one.
     """
-    dnf_counts = (~results['finished']).groupby(results['name']).sum()
-    courses_with_dnf = dnf_counts[dnf_counts > 0].index
-    return results[results['name'].isin(courses_with_dnf)].copy()
+    return results[results['reports_dnfs']].copy()

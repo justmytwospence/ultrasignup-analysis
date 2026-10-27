@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 SCHEMA = """
 CREATE TABLE about (schema_version VARCHAR, snapshot_at TIMESTAMP);
 CREATE TABLE courses (course_id VARCHAR, series_name VARCHAR, distance_km DOUBLE);
-CREATE TABLE races (did INTEGER, course_id VARCHAR, race_name VARCHAR, race_date DATE, distance_km DOUBLE, race_format VARCHAR, virtual BOOLEAN, cancelled BOOLEAN);
+CREATE TABLE races (did INTEGER, course_id VARCHAR, race_name VARCHAR, race_date DATE, distance_km DOUBLE, race_format VARCHAR, virtual BOOLEAN, cancelled BOOLEAN, reports_dnfs BOOLEAN);
 CREATE TABLE runners (runner_id INTEGER, first_name VARCHAR, last_name VARCHAR);
 CREATE TABLE events (event_id INTEGER, series_id INTEGER, event_name VARCHAR);
 CREATE TABLE relay_results (did INTEGER, team_name VARCHAR);
@@ -72,7 +72,7 @@ def build_mirror(path: Path, schema_version: str = "1.0") -> Path:
         "INSERT INTO results VALUES (?, ?, ?, ?, DATE '2025-06-01', 2025, ?, ?, 'Ann', 'Runner', ?, ?, ?, ?, ?)",
         RESULTS,
     )
-    con.execute("INSERT INTO races SELECT DISTINCT did, course_id, race_name, race_date, distance_km, race_format, did = 9, false FROM results")
+    con.execute("INSERT INTO races SELECT DISTINCT did, course_id, race_name, race_date, distance_km, race_format, did = 9, false, did IN (1, 3) FROM results")
     con.close()
     return path
 
