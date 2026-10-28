@@ -42,16 +42,18 @@ uv run pytest -m live   # contract check against the real mirror
 
 ## Notebooks
 
-`notebooks/0_kcore.py` to `4_unobserved_dnfs.py`: a sequence of models, each one step more
-complex. Each notebook writes its output for later ones to `data/cache/` as a small file:
-nb 0 the dev k-core (`kcore/core.parquet`, for models with runner effects), nb 1 course
-effects (`model_1/course_effects.parquet`), nb 2 per-edition reporting probabilities
-(`model_2/edition_reporting.parquet`). nb 1 and nb 2 use all the data and need no core.
-nb 3 and nb 4 are not yet migrated (they still hard-code their own cores). Planned next: a
-finish-time model with runner effects on nb 0's core, before the DNF models.
+Notebooks are named `<track>.<step>_<topic>.py`: track 0 data preparation (`0.1_kcore`),
+track 1 finish times (`1.1_finish_courses`, `1.2_finish_runners`), track 2 DNFs
+(`2.1_dnf_reporting`, then `2.2_dnf_observed` and `2.3_dnf_unobserved`, not yet migrated).
+Each step adds one thing to the earlier steps of its track; a new model gets the next step
+number (`1.3_...`), and steps past 9 are fine (`1.10`). Each notebook keeps its traces and
+writes its output for later ones in `data/cache/<notebook stem>/`: `0.1_kcore/core.parquet`
+(the dev core), `1.1_finish_courses/course_effects.parquet`,
+`1.2_finish_runners/{course,runner}_effects.parquet`,
+`2.1_dnf_reporting/edition_reporting.parquet`. Only models with runner effects need the core.
 `notebooks/legacy_ipynb/` holds the pre-marimo originals, read only.
 
-Workflow conventions (nb 1 and nb 2 are the templates): sections Setup, Data, Model (fixed
+Workflow conventions (1.1 and 2.1 are the templates): sections Setup, Data, Model (fixed
 priors, simulator or prior predictive check), Fit (summary, rank plots), Posterior predictive
 checks, Model comparison (PSIS-LOO), Prior sensitivity (power-scaling), Results, Handoff.
 Priors are fixed in advance, never computed from the data. Distance enters as
@@ -76,7 +78,7 @@ a model version and a data hash.
   start time and expected duration. For final inference too slow locally, the `Dockerfile`
   builds a RunPod JAX-CUDA image (numpyro is fine there).
 - Dev k-core: (3, 840) on every start at 42 km or longer (28 courses, about 8,500 runners),
-  chosen in nb 0; check `n_courses` after subsetting, and loosen for final fits. The full (α, β) sweep takes about a minute; its cache key includes a data
+  chosen in 0.1; check `n_courses` after subsetting, and loosen for final fits. The full (α, β) sweep takes about a minute; its cache key includes a data
   fingerprint.
 
 Open modeling problems and planned work: `docs/open-questions.md`. Past plans: `docs/history/`.

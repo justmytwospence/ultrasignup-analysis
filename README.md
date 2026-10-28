@@ -38,14 +38,18 @@ marimo notebooks, run in order:
 
 | Notebook | What it does |
 |---|---|
-| `0_kcore.py` | Picks a dense (α, β)-core of runners and courses for models with runner effects |
-| `1_finish_times.py` | Pace by distance, gender and age, and course difficulty, on every finisher |
-| `2_dnf_reporting.py` | Which race editions report their DNFs |
-| `3_observed_dnfs.py` | Joint finish-time and DNF model |
-| `4_unobserved_dnfs.py` | Adds DNFs that races never reported |
+| `0.1_kcore.py` | Picks a dense (α, β)-core of runners and courses for models with runner effects |
+| `1.1_finish_courses.py` | Pace by distance, gender and age, and course difficulty, on every finisher |
+| `1.2_finish_runners.py` | Adds runner effects on the core, separating course difficulty from field strength |
+| `2.1_dnf_reporting.py` | Which race editions report their DNFs |
+| `2.2_dnf_observed.py` | Joint finish-time and DNF model (not yet migrated) |
+| `2.3_dnf_unobserved.py` | Adds DNFs that races never reported (not yet migrated) |
+
+Names are `<track>.<step>_<topic>`: track 0 prepares data, 1 models finish times, 2 models
+DNFs; a step builds on the earlier steps of its track.
 
 ```sh
-uv run marimo edit notebooks/0_kcore.py
+uv run marimo edit notebooks/0.1_kcore.py
 ```
 
 Known problems and planned work: [docs/open-questions.md](docs/open-questions.md).

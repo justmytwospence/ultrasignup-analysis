@@ -60,7 +60,7 @@ markers = ["live: needs the real mirror (ULTRASIGNUP_QUACK_URI and ULTRASIGNUP_Q
 addopts = "-m 'not live'"
 
 [tool.marimo.runtime]
-# 0_kcore.py's 3D wireframe carries 9 toggle states (3 z-axes × 3 colors)
+# 0.1_kcore.py's 3D wireframe carries 9 toggle states (3 z-axes × 3 colors)
 # which serializes to ~24MB. Override the 8MB user-config default
 # (~/.config/marimo/marimo.toml) for this project.
 output_max_bytes = 40_000_000

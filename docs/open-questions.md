@@ -60,7 +60,7 @@ dropped and runner histories deferred with no plan):
   absent from `results`. If hiding correlates with race type or organizer, course coverage is
   biased; `events.results_hidden` and `races.results_state = 'hidden'` let us measure that.
 
-## nb 1: finish times
+## 1.1 finish_courses (and 1.2 finish_runners)
 
 - **Year trend** (seen in nb 1's posterior predictive check): mean residual drifts from about
   -5% in the 1990s to +3% in 2026, likely broadening fields. Not in the model; a smooth year
@@ -80,7 +80,7 @@ dropped and runner histories deferred with no plan):
   and F. Fit gender-specific effects as a sensitivity check; keep shared if their correlation is
   above about 0.9.
 
-## nb 2: DNF reporting
+## 2.1 dnf_reporting
 
 - **Distance enters the logit linearly in km** [UltraSignup-rl7], while nb 3/4 use a log
   distance ratio (plus a quadratic in nb 4). Align the functional forms.
@@ -88,7 +88,7 @@ dropped and runner histories deferred with no plan):
   pace and DNF effects may reflect runner self-selection. Add a runner effect on repeat runners
   and check whether the correlation survives.
 
-## nb 4: unobserved DNFs
+## 2.3 dnf_unobserved
 
 - **Unidentifiable at (3, 840)** [UltraSignup-ubz]: the cached trace has r_hat 2.9 to 4.6 on all
   hyperparameters, a huge sigma_obs and mu_logit_dnf = 157. Check unit consistency of observed
