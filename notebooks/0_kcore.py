@@ -46,17 +46,19 @@ def _(mo):
 
 @app.cell
 def _():
+    from pathlib import Path
+
     import pandas as pd
     import numpy as np
     import plotly.graph_objects as go
     import igraph as ig
 
-    from utils.data_processing import load_results, process_results, filter_races_with_dnfs
+    from utils.data_processing import load_results, process_results
     from utils.kcore_subsetting import evaluate_all_kcore_candidates, subset_kcore_data
 
     return (
+        Path,
         evaluate_all_kcore_candidates,
-        filter_races_with_dnfs,
         go,
         ig,
         load_results,
@@ -68,13 +70,12 @@ def _():
 
 
 @app.cell
-def _(filter_races_with_dnfs, load_results, process_results):
-    # preprocess data: marathon and longer, editions that report their DNFs
+def _(load_results, process_results):
+    # every start (finish or DNF) at marathon distance or longer; the core feeds a
+    # finish-time model, so no DNF-reporting filter
 
-    results = load_results()
-    results = process_results(results)
-    results = filter_races_with_dnfs(results)
-    results = results[results['distance_miles'] >= 26.2]
+    results = process_results(load_results())
+    results = results[results['distance_km'] >= 42]
     return (results,)
 
 
@@ -261,19 +262,18 @@ def _(candidates_df, go, pd, results):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    # Examining the (3, 500) K-Core
+    # Examining the (3, 840) K-Core
 
-    Based on our exploration, we select the **(α=3, β=500)** configuration for downstream modeling. This choice balances several considerations:
+    We select **(α=3, β=840)** as the development core for the runner-effect model:
 
-    - **α=3**: Runners must have started at least 3 different courses. This ensures we have enough repeated observations per runner to estimate individual ability, while not being so restrictive that we lose casual participants.
+    - **α=3**: every runner started at least 3 core courses, enough repeat observations to separate a runner's ability from the courses they ran.
+    - **β=840**: every course had at least 840 distinct core starters. This leaves 28 courses and about 140,000 results, small enough to sample runner and course effects in minutes. Loosen β for final fits.
 
-    - **β=500**: Courses must have at least 500 distinct starters across their DNF-reporting editions. This focuses on well-established events with substantial participation, where we can reliably estimate course difficulty and DNF rates. It is close to the largest β that still leaves a core at α=3 (548).
-
-    The resulting subset represents the **"core" ultramarathon community**: dedicated runners who return to the sport repeatedly, competing in popular events that form the backbone of the ultra calendar.
+    **Scope.** The core is a convenience sample, not a representative one: it keeps the biggest, longest-running races, most of them in the western US. It is for estimating how runner and course effects separate, not for statements about all races. Every runner and course in it is connected through shared races, which a model with both effects needs.
 
     ## Visualizing the Bipartite Structure
 
-    With our k-core selected, we can now visualize the runner-course relationships. These visualizations reveal the community structure hidden within the data—clusters of runners who share similar race portfolios, courses that attract overlapping populations, and the overall connectivity patterns that make comparative inference possible.
+    The visualizations below show the runner-course relationships: clusters of runners who share similar race portfolios, courses that attract overlapping populations, and the connectivity that makes comparative inference possible.
     """)
     return
 
@@ -290,8 +290,8 @@ def _(mo):
 
 @app.cell
 def _(results, subset_kcore_data):
-    # Build the (3, 500) subset
-    alpha, beta = 3, 500
+    # Build the (3, 840) subset
+    alpha, beta = 3, 840
 
     kcore_subset = subset_kcore_data(results, alpha=alpha, beta=beta)
     kcore_data = kcore_subset[kcore_subset['in_kcore']].copy()
@@ -318,12 +318,12 @@ def _(results, subset_kcore_data):
     print(f"  Core results: {len(kcore_data):,}; with closure: {len(_model):,}")
     print(f"  Runner-course edges: {len(edge_counts):,} (max starts per pair: {edge_counts['edge_weight'].max()})")
     print(f"  DNF rate: core runners {1 - kcore_data['finished'].mean():.1%}, all starters at core courses {1 - _model['finished'].mean():.1%}")
-
     return (
         alpha,
         beta,
         course_labels,
         edge_counts,
+        kcore_data,
         kcore_sample,
         runner_degrees,
     )
@@ -561,23 +561,34 @@ def _(mo):
     mo.md(r"""
     ---
 
-    # Summary & Next Steps
+    # Summary
 
-    We've successfully identified a densely-connected subset of the ultramarathon universe using k-core decomposition. The (3, 500)-core balances data retention with the connectivity needed for comparative inference, giving us a foundation for the modeling work ahead.
+    The (3, 840)-core is the dense, connected subset of runners and courses that a model with runner effects needs. It is saved (see Handoff) for the runner-effect finish-time model, which fits on it; the course-only model (nb 1) and the reporting model (nb 2) use all the data and need no core.
 
-    **Key takeaways:**
-    - The full ultramarathon dataset is extremely sparse—most runners and courses share few direct connections
-    - K-core decomposition provides a principled way to extract a dense, well-connected subset
-    - The selected subset represents the "core" ultramarathon community: repeat participants at established events
-    - Visualizations reveal meaningful structure: runner clusters, hub courses, and community topology
-
-    **What's next?** In the following notebooks, we'll use this k-core subset to:
-    1. **Model finish times**: Estimate runner abilities and course difficulties using Bayesian hierarchical models
-    2. **Analyze DNF patterns**: Understand which factors predict whether a runner finishes vs. drops out
-    3. **Identify reporting artifacts**: Distinguish true DNFs from data collection issues
-
-    The dense connectivity of our k-core ensures that runner and course effects can be properly identified—the foundation for all downstream inference.
+    The input is every start (finish or DNF) at marathon distance or longer. DNFs count as edges so that runners who often drop are not excluded from the core.
     """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Handoff
+
+    The chosen core is saved as `data/cache/kcore/core.parquet` (one row per runner and course in the core, plus the α and β used), with the closure flags available by re-running `subset_kcore_data` on the same input.
+    """)
+    return
+
+
+@app.cell
+def _(Path, alpha, beta, kcore_data):
+    core_path = Path(__file__).resolve().parent.parent / 'data' / 'cache' / 'kcore' / 'core.parquet'
+    core_members = (
+        kcore_data[['participant_id', 'name']].drop_duplicates()
+        .assign(alpha=alpha, beta=beta)
+    )
+    core_members.to_parquet(core_path, index=False)
+    print(f"Saved {core_members['participant_id'].nunique():,} runners x {core_members['name'].nunique()} courses to {core_path.name}")
     return
 
 

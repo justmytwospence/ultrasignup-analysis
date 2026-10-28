@@ -42,8 +42,21 @@ uv run pytest -m live   # contract check against the real mirror
 
 ## Notebooks
 
-`notebooks/0_kcore.py` to `4_unobserved_dnfs.py`, run in that order (each later one reads the
-k-core chosen in 0). `notebooks/legacy_ipynb/` holds the pre-marimo originals, read only.
+`notebooks/0_kcore.py` to `4_unobserved_dnfs.py`: a sequence of models, each one step more
+complex. Each notebook writes its output for later ones to `data/cache/` as a small file:
+nb 0 the dev k-core (`kcore/core.parquet`, for models with runner effects), nb 1 course
+effects (`model_1/course_effects.parquet`), nb 2 per-edition reporting probabilities
+(`model_2/edition_reporting.parquet`). nb 1 and nb 2 use all the data and need no core.
+nb 3 and nb 4 are not yet migrated (they still hard-code their own cores). Planned next: a
+finish-time model with runner effects on nb 0's core, before the DNF models.
+`notebooks/legacy_ipynb/` holds the pre-marimo originals, read only.
+
+Workflow conventions (nb 1 and nb 2 are the templates): sections Setup, Data, Model (fixed
+priors, simulator or prior predictive check), Fit (summary, rank plots), Posterior predictive
+checks, Model comparison (PSIS-LOO), Prior sensitivity (power-scaling), Results, Handoff.
+Priors are fixed in advance, never computed from the data. Distance enters as
+`log(distance_km / 50)`; the data are marathon (42 km) to 100 miles. Trace caches are keyed by
+a model version and a data hash.
 
 - Load the project's `marimo-pair` skill and the global `marimo-style` skill before touching a
   notebook. Every change goes through marimo-pair against a live session, never by editing the
@@ -62,9 +75,8 @@ k-core chosen in 0). `notebooks/legacy_ipynb/` holds the pre-marimo originals, r
   `HalfNormal` scales and `LKJCorr` instead). Give long cells a `mo.callout` beacon with the
   start time and expected duration. For final inference too slow locally, the `Dockerfile`
   builds a RunPod JAX-CUDA image (numpyro is fine there).
-- Dev k-core: develop at a tight (α, β) such as (3, 500) (25 courses; (3, 840) is empty since
-  the graph counts only DNF-reporting editions), check `n_courses` after subsetting, and loosen
-  for final fits. The full (α, β) sweep takes about a minute; its cache key includes a data
+- Dev k-core: (3, 840) on every start at 42 km or longer (28 courses, about 8,500 runners),
+  chosen in nb 0; check `n_courses` after subsetting, and loosen for final fits. The full (α, β) sweep takes about a minute; its cache key includes a data
   fingerprint.
 
 Open modeling problems and planned work: `docs/open-questions.md`. Past plans: `docs/history/`.

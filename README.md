@@ -38,9 +38,9 @@ marimo notebooks, run in order:
 
 | Notebook | What it does |
 |---|---|
-| `0_kcore.py` | Picks a dense (α, β)-core of runners and courses to model |
-| `1_finish_times.py` | Course difficulty from finish times |
-| `2_dnf_reporting.py` | Which races report their DNFs |
+| `0_kcore.py` | Picks a dense (α, β)-core of runners and courses for models with runner effects |
+| `1_finish_times.py` | Pace by distance, gender and age, and course difficulty, on every finisher |
+| `2_dnf_reporting.py` | Which race editions report their DNFs |
 | `3_observed_dnfs.py` | Joint finish-time and DNF model |
 | `4_unobserved_dnfs.py` | Adds DNFs that races never reported |
 

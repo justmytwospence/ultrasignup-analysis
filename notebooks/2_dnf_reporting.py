@@ -728,6 +728,24 @@ def _(
     _ax2.grid(alpha=0.3, axis='y')
     _fig.tight_layout()
     _fig
+    return (edition_reporting,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Handoff
+
+    Each edition's probability of reporting DNFs is saved as `data/cache/model_2/edition_reporting.parquet` (1 for editions known to report, the posterior mean for unknown ones), with its course, series, year, distance and finishers. nb 4 uses it as the weight on an edition's zero-DNF count.
+    """)
+    return
+
+
+@app.cell
+def _(Path, edition_reporting):
+    edition_reporting_path = Path(__file__).resolve().parent.parent / 'data' / 'cache' / 'model_2' / 'edition_reporting.parquet'
+    edition_reporting.to_parquet(edition_reporting_path, index=False)
+    edition_reporting.groupby('kind').agg(editions=('did', 'size'), mean_p_reports=('p_reports', 'mean')).round(3)
     return
 
 

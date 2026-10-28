@@ -62,6 +62,12 @@ dropped and runner histories deferred with no plan):
 
 ## nb 1: finish times
 
+- **Year trend** (seen in nb 1's posterior predictive check): mean residual drifts from about
+  -5% in the 1990s to +3% in 2026, likely broadening fields. Not in the model; a smooth year
+  term still integrates out. Decide after the runner-effect model, which absorbs part of it.
+- **Per-course noise**: within-course SD varies more than one sigma per gender allows
+  (championship fields tight, open races wide); a per-course sigma still collapses.
+
 - **Terrain as a course covariate** (mirror schema 1.2): `courses.route_gain_m` / `route_loss_m` are
   measured on a DEM from a matched GPS track. Gain per km would explain part of each course
   effect, letting the remainder mean "harder than its terrain". Filter on `route_confidence`
