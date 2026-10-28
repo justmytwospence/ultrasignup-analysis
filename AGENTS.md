@@ -44,13 +44,13 @@ uv run pytest -m live   # contract check against the real mirror
 
 Notebooks are named `<track>.<step>_<topic>.py`: track 0 data preparation (`0.1_kcore`),
 track 1 finish times (`1.1_finish_courses`, `1.2_finish_runners`), track 2 DNFs
-(`2.1_dnf_reporting`, then `2.2_dnf_observed` and `2.3_dnf_unobserved`, not yet migrated).
+(`2.1_dnf_reporting`, `2.2_dnf_observed`, then `2.3_dnf_unobserved`, not yet migrated).
 Each step adds one thing to the earlier steps of its track; a new model gets the next step
 number (`1.3_...`), and steps past 9 are fine (`1.10`). Each notebook keeps its traces and
 writes its output for later ones in `data/cache/<notebook stem>/`: `0.1_kcore/core.parquet`
 (the dev core), `1.1_finish_courses/course_effects.parquet`,
 `1.2_finish_runners/{course,runner}_effects.parquet`,
-`2.1_dnf_reporting/edition_reporting.parquet`. Only models with runner effects need the core.
+`2.1_dnf_reporting/edition_reporting.parquet`, `2.2_dnf_observed/{course,runner}_effects.parquet`. Only models with runner effects need the core.
 `notebooks/legacy_ipynb/` holds the pre-marimo originals, read only.
 
 Workflow conventions (1.1 and 2.1 are the templates): sections Setup, Data, Model (fixed

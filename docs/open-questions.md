@@ -84,9 +84,12 @@ dropped and runner histories deferred with no plan):
 
 - **Distance enters the logit linearly in km** [UltraSignup-rl7], while nb 3/4 use a log
   distance ratio (plus a quadratic in nb 4). Align the functional forms.
-- **Selection bias vs course difficulty** [UltraSignup-i6e]: the LKJ correlation between course
-  pace and DNF effects may reflect runner self-selection. Add a runner effect on repeat runners
-  and check whether the correlation survives.
+- **Selection bias vs course difficulty** [UltraSignup-i6e]: answered in 2.2. With runner
+  effects, the course-level pace-DNF correlation is about zero (-0.05, 94% -0.39 to 0.30); the
+  runner-level one is 0.33 (slower runners drop more).
+- **Curved runner pace-DNF relation** (2.2's posterior predictive check): observed DNF rates
+  are U-shaped in runner pace (fast runners also drop more than the linear correlation allows).
+  Add a quadratic in the runner pace effect to the DNF logit.
 
 ## 2.3 dnf_unobserved
 
