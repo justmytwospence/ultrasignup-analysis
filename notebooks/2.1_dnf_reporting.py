@@ -24,7 +24,7 @@ def _(mo):
     - **reports, zero DNFs**: it posts DNS rows but no DNFs, so it lists non-finishers and the zero is real
     - **unknown**: it posts neither, so it either had no DNFs or does not report them
 
-    The model infers, for the unknown editions, the probability that they report. Reporting depends on era and on the organizer (series); the DNF rate depends on distance. An unknown edition whose zero DNFs would be very surprising for its distance and field size is probably not reporting. nb 4 reuses the reporting part.
+    The model infers, for the unknown editions, the probability that they report. Reporting depends on era and on the organizer (series); the DNF rate depends on distance. An unknown edition whose zero DNFs would be very surprising for its distance and field size is probably not reporting. 2.3 reuses the reporting part.
 
     The notebook follows the Bayesian workflow: data, model and prior predictive check, fit and convergence, posterior predictive checks, model comparison with LOO, prior sensitivity, and finally the results.
     """)
@@ -444,7 +444,7 @@ def _(
     _key = hashlib.sha1(pd.util.hash_pandas_object(
         editions[['did', 'series_id', 'year', 'distance_km', 'n_starters', 'n_dnf', 'n_dns', 'kind']], index=False
     ).to_numpy().tobytes()).hexdigest()[:12]
-    _cache_dir = Path(__file__).resolve().parent.parent / 'data' / 'cache' / 'model_2'
+    _cache_dir = Path(__file__).resolve().parent.parent / 'data' / 'cache' / '2.1_dnf_reporting'
     _cache_dir.mkdir(parents=True, exist_ok=True)
     # Bump when the model changes, so a cached trace is never reused for a different model.
     _MODEL_VERSION = 3
@@ -736,14 +736,14 @@ def _(mo):
     mo.md(r"""
     ## Handoff
 
-    Each edition's probability of reporting DNFs is saved as `data/cache/model_2/edition_reporting.parquet` (1 for editions known to report, the posterior mean for unknown ones), with its course, series, year, distance and finishers. nb 4 uses it as the weight on an edition's zero-DNF count.
+    Each edition's probability of reporting DNFs is saved as `data/cache/2.1_dnf_reporting/edition_reporting.parquet` (1 for editions known to report, the posterior mean for unknown ones), with its course, series, year, distance and finishers. 2.3 uses it as the weight on an edition's zero-DNF count.
     """)
     return
 
 
 @app.cell
 def _(Path, edition_reporting):
-    edition_reporting_path = Path(__file__).resolve().parent.parent / 'data' / 'cache' / 'model_2' / 'edition_reporting.parquet'
+    edition_reporting_path = Path(__file__).resolve().parent.parent / 'data' / 'cache' / '2.1_dnf_reporting' / 'edition_reporting.parquet'
     edition_reporting.to_parquet(edition_reporting_path, index=False)
     edition_reporting.groupby('kind').agg(editions=('did', 'size'), mean_p_reports=('p_reports', 'mean')).round(3)
     return

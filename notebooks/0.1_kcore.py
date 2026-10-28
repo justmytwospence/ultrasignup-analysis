@@ -575,14 +575,14 @@ def _(mo):
     mo.md(r"""
     ## Handoff
 
-    The chosen core is saved as `data/cache/kcore/core.parquet` (one row per runner and course in the core, plus the α and β used), with the closure flags available by re-running `subset_kcore_data` on the same input.
+    The chosen core is saved as `data/cache/0.1_kcore/core.parquet` (one row per runner and course in the core, plus the α and β used), with the closure flags available by re-running `subset_kcore_data` on the same input.
     """)
     return
 
 
 @app.cell
 def _(Path, alpha, beta, kcore_data):
-    core_path = Path(__file__).resolve().parent.parent / 'data' / 'cache' / 'kcore' / 'core.parquet'
+    core_path = Path(__file__).resolve().parent.parent / 'data' / 'cache' / '0.1_kcore' / 'core.parquet'
     core_members = (
         kcore_data[['participant_id', 'name']].drop_duplicates()
         .assign(alpha=alpha, beta=beta)

@@ -16,15 +16,15 @@ def _(mo):
     mo.md(r"""
     # Finish Times with Runner Effects
 
-    The course-only model (nb 1) cannot tell a hard course from a strong field: a course that draws fast runners looks easy. This model adds a runner effect, each runner's typical pace relative to others of the same gender and age, so a course effect means "harder than its runners would predict".
+    The course-only model (1.1) cannot tell a hard course from a strong field: a course that draws fast runners looks easy. This model adds a runner effect, each runner's typical pace relative to others of the same gender and age, so a course effect means "harder than its runners would predict".
 
     $$\log \text{pace}_i = m_c + \tfrac{\pm 1}{2}\big(\delta_\alpha + \delta_\beta\, x_c\big) + \gamma_{1g} A_i + \gamma_{2g} A_i^2 + v_r + \varepsilon_i$$
 
     $$m_c \sim N(\alpha + \beta x_c, \tau^2), \qquad v_r \sim N(0, \omega^2), \qquad \varepsilon_i \sim N(0, \sigma_g^2)$$
 
-    with $x_c = \log(d_c / 50\,\text{km})$, $A_i = (\text{age}_i - 40)/10$, and $\pm$ for women and men. Everything else matches nb 1, so the only new idea is $v_r$.
+    with $x_c = \log(d_c / 50\,\text{km})$, $A_i = (\text{age}_i - 40)/10$, and $\pm$ for women and men. Everything else matches 1.1, so the only new idea is $v_r$.
 
-    Runner effects are only identified for runners who ran several courses, so the model fits nb 0's dense core: every finisher at its 28 courses (runners with one course still inform the course effects, pooled toward zero). Runners span courses, so unlike nb 1 the effects cannot be integrated out and are sampled.
+    Runner effects are only identified for runners who ran several courses, so the model fits 0.1's dense core: every finisher at its 28 courses (runners with one course still inform the course effects, pooled toward zero). Runners span courses, so unlike 1.1 the effects cannot be integrated out and are sampled.
 
     What it still leaves out: edition-to-edition variation, a runner's improvement or decline over time beyond age, and DNFs.
     """)
@@ -57,7 +57,6 @@ def _():
     from utils.data_processing import load_results, process_results
 
     CACHE = Path(__file__).resolve().parent.parent / 'data' / 'cache'
-
     return (
         CACHE,
         az,
@@ -79,17 +78,17 @@ def _(mo):
     mo.md(r"""
     ## Data
 
-    Every finisher at the 28 courses of nb 0's core (`kcore/core.parquet`), with nb 1's course effects (`model_1/course_effects.parquet`) for comparison.
+    Every finisher at the 28 courses of 0.1's core (`0.1_kcore/core.parquet`), with 1.1's course effects (`1.1_finish_courses/course_effects.parquet`) for comparison.
     """)
     return
 
 
 @app.cell
 def _(CACHE, ftm, load_results, pd, process_results):
-    _core = pd.read_parquet(CACHE / 'kcore' / 'core.parquet')
+    _core = pd.read_parquet(CACHE / '0.1_kcore' / 'core.parquet')
     _results = process_results(load_results())
     finishers = _results[_results['finished'] & _results['name'].isin(_core['name'].unique())].reset_index(drop=True)
-    nb1_effects = pd.read_parquet(CACHE / 'model_1' / 'course_effects.parquet').set_index('course_id')
+    nb1_effects = pd.read_parquet(CACHE / '1.1_finish_courses' / 'course_effects.parquet').set_index('course_id')
 
     _z, log_pace = ftm.design(finishers)
     x_finisher, age_z, age_z2 = _z[:, 1], _z[:, 2], _z[:, 3]
@@ -164,7 +163,7 @@ def _(mo):
     mo.md(r"""
     ## Model
 
-    Priors match nb 1 where the parameter is the same, and are fixed in advance:
+    Priors match 1.1 where the parameter is the same, and are fixed in advance:
 
     | Parameter | Prior | Meaning |
     |---|---|---|
@@ -307,7 +306,7 @@ def _(
     runner_model,
 ):
     _key = hashlib.sha1(b''.join(np.ascontiguousarray(a).tobytes() for a in (log_pace, course_idx, runner_idx, gender_idx, age_z))).hexdigest()[:12]
-    _cache_dir = CACHE / 'model_runner'
+    _cache_dir = CACHE / '1.2_finish_runners'
     _cache_dir.mkdir(parents=True, exist_ok=True)
     # Bump when the model changes, so a cached trace is never reused for a different model.
     _MODEL_VERSION = 1
@@ -533,7 +532,7 @@ def _(mo):
     mo.md(r"""
     ## Results
 
-    **Left**: each course's effect with runner effects (vertical) against nb 1's course-only effect (horizontal). Points below the diagonal drew weaker fields than these courses on average, which made them look harder in nb 1 than they are; points above drew stronger fields and are harder than nb 1 said. **Right**: the spread of runner ability against the spread of course difficulty and of a runner's day-to-day variation.
+    **Left**: each course's effect with runner effects (vertical) against 1.1's course-only effect (horizontal). Points below the diagonal drew weaker fields than these courses on average, which made them look harder in 1.1 than they are; points above drew stronger fields and are harder than 1.1 said. **Right**: the spread of runner ability against the spread of course difficulty and of a runner's day-to-day variation.
     """)
     return
 
@@ -555,7 +554,7 @@ def _(course_label, courses, nb1_effects, np, pd, plt, runner_trace):
     _ax1.plot(_lim, _lim, color='gray', lw=1)
     for _i in np.argsort(np.abs(_new_c - _old))[-10:]:
         _ax1.annotate(str(course_label[_i])[:28], (_old[_i], _new_c[_i]), fontsize=7, xytext=(4, 2), textcoords='offset points')
-    _ax1.set(xlabel='nb 1 course effect (course only)', ylabel='Course effect with runner effects', title='Course effects, centered over these 28 courses')
+    _ax1.set(xlabel='1.1 course effect (course only)', ylabel='Course effect with runner effects', title='Course effects, centered over these 28 courses')
     _draws = lambda v: runner_trace.posterior[v].values.reshape(-1, *runner_trace.posterior[v].shape[2:])
     _parts = {'courses (tau)': _draws('tau'), 'runners (omega)': _draws('omega'),
               'day-to-day, M (sigma)': _draws('sigma')[:, 0], 'day-to-day, F (sigma)': _draws('sigma')[:, 1]}
@@ -573,7 +572,7 @@ def _(mo):
     mo.md(r"""
     ## Handoff
 
-    Saved to `data/cache/model_runner/`: runner-adjusted course effects (`course_effects.parquet`, with nb 1's for comparison) and runner effects (`runner_effects.parquet`, posterior mean and SD, with each runner's number of courses here). The table lists the courses whose effect moved most.
+    Saved to `data/cache/1.2_finish_runners/`: runner-adjusted course effects (`course_effects.parquet`, with 1.1's for comparison) and runner effects (`runner_effects.parquet`, posterior mean and SD, with each runner's number of courses here). The table lists the courses whose effect moved most.
     """)
     return
 
@@ -598,8 +597,8 @@ def _(
         'effect_mean': _rp.mean(('chain', 'draw')).values,
         'effect_sd': _rp.std(('chain', 'draw')).values,
     })
-    runner_effects.to_parquet(CACHE / 'model_runner' / 'runner_effects.parquet', index=False)
-    course_comparison.rename_axis('course_id').reset_index().to_parquet(CACHE / 'model_runner' / 'course_effects.parquet', index=False)
+    runner_effects.to_parquet(CACHE / '1.2_finish_runners' / 'runner_effects.parquet', index=False)
+    course_comparison.rename_axis('course_id').reset_index().to_parquet(CACHE / '1.2_finish_runners' / 'course_effects.parquet', index=False)
     pd.concat([course_comparison.head(6), course_comparison.tail(6)]).round(3)
     return
 
