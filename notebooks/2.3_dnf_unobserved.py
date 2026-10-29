@@ -57,15 +57,24 @@ def _():
     from scipy.special import expit, log_expit
 
     from utils import finish_time_model as ftm
+    from utils.sampling import check_memory, sample_lean
     from utils.data_processing import load_results, process_results
 
     CACHE = Path(__file__).resolve().parent.parent / 'data' / 'cache'
     OUT = CACHE / '2.3_dnf_unobserved'
     OUT.mkdir(parents=True, exist_ok=True)
+
+    # Which 0.1 core to fit: 'core' is the dev core (3, 840), 28 courses, minutes;
+    # 'core_3_500' is the final-fit core, 172 courses, hours (fewer draws to bound memory).
+    CORE = 'core_3_500'
+    DRAWS = 1000 if CORE == 'core' else 500
     return (
         CACHE,
+        CORE,
+        DRAWS,
         OUT,
         az,
+        check_memory,
         datetime,
         expit,
         ftm,
@@ -78,6 +87,7 @@ def _():
         process_results,
         pt,
         pytensor,
+        sample_lean,
         xr,
     )
 
@@ -87,14 +97,14 @@ def _(mo):
     mo.md(r"""
     ## Data
 
-    2.2's data (every finisher at the 28 core courses for finish times; every start in reporting editions for DNFs), plus the editions at those courses that do not report, each with its finishers and 2.1's prior reporting probabilities. 2.2's course effects come along for comparison.
+    2.2's data (every finisher at the core courses for finish times; every start in reporting editions for DNFs), plus the editions at those courses that do not report, each with its finishers and 2.1's prior reporting probabilities. 2.2's course effects come along for comparison.
     """)
     return
 
 
 @app.cell
-def _(CACHE, ftm, load_results, np, pd, process_results):
-    _core = pd.read_parquet(CACHE / '0.1_kcore' / 'core.parquet')
+def _(CACHE, CORE, ftm, load_results, np, pd, process_results):
+    _core = pd.read_parquet(CACHE / '0.1_kcore' / f'{CORE}.parquet')
     _results = process_results(load_results())
     _at_core = _results[_results['name'].isin(_core['name'].unique())]
     finishers = _at_core[_at_core['finished']].reset_index(drop=True)
@@ -374,9 +384,11 @@ def _(mo):
 @app.cell
 def _(
     DNF_SCALARS,
+    DRAWS,
     FINISH_SCALARS,
     OUT,
     az,
+    check_memory,
     datetime,
     dnf,
     f_course,
@@ -385,15 +397,49 @@ def _(
     log_pace,
     mo,
     np,
-    pm,
+    runner_gender,
     s_age,
     s_course,
     s_runner,
+    sample_lean,
     unknown_d,
     unknown_r,
     unobserved_model,
+    xr,
 ):
     _key = hashlib.sha1(b''.join(np.ascontiguousarray(a).tobytes() for a in (log_pace, f_course, f_runner, dnf, s_course, s_runner, s_age, unknown_r, unknown_d))).hexdigest()[:12]
+    _PER_RUNNER = ('runner_effect', 'runner_dnf_effect')
+
+
+    def _derive_runner_effects(post):
+        """Per-runner effects from the stored raw effects and scalars, as float32, one chain at a
+        time (they are left out of sampling to keep its memory small). Mirrors the model."""
+        _avg = np.eye(2)[runner_gender] / np.bincount(runner_gender, minlength=2)
+
+        def _zero_sum(raw):
+            return raw - (raw @ _avg)[..., runner_gender]
+
+        _out = {}
+        _z1 = np.stack([_zero_sum(post['runner_raw'].values[c]).astype(np.float32) for c in range(post.sizes['chain'])])
+        _sc = lambda v: post[v].values[..., None].astype(np.float32)
+        _out['runner_effect'] = _sc('omega') * _z1
+        if 'runner_dnf_raw' in post:
+            _z2 = np.stack([_zero_sum(post['runner_dnf_raw'].values[c]).astype(np.float32) for c in range(post.sizes['chain'])])
+            if 'rho_runner' in post:
+                _r = _sc('rho_runner')
+                _w = _sc('omega_dnf') * (_r * _z1 + np.sqrt(1 - _r**2) * _z2)
+                if 'dnf_runner_pace_quadratic' in post:
+                    _w = _w + _sc('dnf_runner_pace_quadratic') * (_z1**2 - 1)
+            else:
+                _w = _sc('omega_dnf') * _z2
+            _out['runner_dnf_effect'] = _w
+        _dims = ('chain', 'draw', 'runner')
+        _post = post.drop_vars([v for v in ('runner_raw', 'runner_dnf_raw') if v in post])
+        for _k, _v in _out.items():
+            _post[_k] = xr.DataArray(_v, dims=_dims, coords={'chain': post['chain'], 'draw': post['draw'], 'runner': post['runner']})
+        return _post
+
+
     # Bump when the model changes, so a cached trace is never reused for a different model.
     _MODEL_VERSION = 1
 
@@ -403,12 +449,11 @@ def _(
         _path = OUT / f'unobserved_{label}_v{_MODEL_VERSION}_{_key}.nc'
         if _path.exists():
             return az.from_netcdf(_path)
-        mo.output.replace(mo.callout(mo.md(f"Sampling the {label} model since {datetime.now():%H:%M} (about {minutes} minutes)."), kind='info'))
-        with model:
-            _trace = pm.sample(draws=1000, tune=1000, chains=4, nuts_sampler='nutpie', random_seed=42, progressbar=True)
-        _post = _trace.posterior.drop_vars([v for v in ('runner_raw', 'runner_dnf_raw') if v in _trace.posterior])
-        for _v in ('runner_effect', 'runner_dnf_effect'):
-            _post[_v] = _post[_v].astype(np.float32)
+        _keep = [v.name for v in model.free_RVs + model.deterministics if v.name not in _PER_RUNNER]
+        _gb = check_memory(model, _keep, chains=4, draws=DRAWS)
+        mo.output.replace(mo.callout(mo.md(f"Sampling the {label} model since {datetime.now():%H:%M} (about {minutes} minutes, about {_gb:.0f} GB)."), kind='info'))
+        _trace = sample_lean(model, _keep, draws=DRAWS, random_seed=42, progressbar=True)
+        _post = _derive_runner_effects(_trace.posterior)
         _trace = az.InferenceData(posterior=_post, sample_stats=_trace.sample_stats)
         _trace.to_netcdf(_path)
         return _trace
@@ -700,7 +745,7 @@ def _(mo):
 
 @app.cell
 def _(CACHE, DNF_SCALARS, az, pd, unobserved_summary):
-    _t22 = az.from_netcdf(next((CACHE / '2.2_dnf_observed').glob('dnf_quadratic_v1_*.nc')))
+    _t22 = az.from_netcdf(max((CACHE / '2.2_dnf_observed').glob('dnf_quadratic_v1_*.nc'), key=lambda p: p.stat().st_mtime))  # the most recent 2.2 fit
     _a = az.summary(_t22, var_names=DNF_SCALARS, round_to=3)[['mean', 'hdi_3%', 'hdi_97%']].add_prefix('2.2 ')
     _b = unobserved_summary.loc[DNF_SCALARS, ['mean', 'hdi_3%', 'hdi_97%']].round(3).add_prefix('2.3 ')
     pd.concat([_a, _b], axis=1)

@@ -55,6 +55,7 @@ def _():
     import matplotlib.pyplot as plt
 
     from utils import finish_time_model as ftm
+    from utils.sampling import check_memory, sample_lean
     from utils.data_processing import load_results, process_results
 
     CACHE = Path(__file__).resolve().parent.parent / 'data' / 'cache'
@@ -63,12 +64,12 @@ def _():
     # 'core_3_500' is the final-fit core, 172 courses, hours (fewer draws to bound memory).
     CORE = 'core_3_500'
     DRAWS = 1000 if CORE == 'core' else 500
-
     return (
         CACHE,
         CORE,
         DRAWS,
         az,
+        check_memory,
         datetime,
         ftm,
         hashlib,
@@ -79,6 +80,7 @@ def _():
         pm,
         process_results,
         pytensor,
+        sample_lean,
         xr,
     )
 
@@ -305,6 +307,7 @@ def _(
     SCALARS,
     age_z,
     az,
+    check_memory,
     course_idx,
     datetime,
     gender_idx,
@@ -312,13 +315,47 @@ def _(
     log_pace,
     mo,
     np,
-    pm,
+    runner_gender,
     runner_idx,
     runner_model,
+    sample_lean,
+    xr,
 ):
     _key = hashlib.sha1(b''.join(np.ascontiguousarray(a).tobytes() for a in (log_pace, course_idx, runner_idx, gender_idx, age_z))).hexdigest()[:12]
     _cache_dir = CACHE / '1.2_finish_runners'
     _cache_dir.mkdir(parents=True, exist_ok=True)
+    _PER_RUNNER = ('runner_effect', 'runner_dnf_effect')
+
+
+    def _derive_runner_effects(post):
+        """Per-runner effects from the stored raw effects and scalars, as float32, one chain at a
+        time (they are left out of sampling to keep its memory small). Mirrors the model."""
+        _avg = np.eye(2)[runner_gender] / np.bincount(runner_gender, minlength=2)
+
+        def _zero_sum(raw):
+            return raw - (raw @ _avg)[..., runner_gender]
+
+        _out = {}
+        _z1 = np.stack([_zero_sum(post['runner_raw'].values[c]).astype(np.float32) for c in range(post.sizes['chain'])])
+        _sc = lambda v: post[v].values[..., None].astype(np.float32)
+        _out['runner_effect'] = _sc('omega') * _z1
+        if 'runner_dnf_raw' in post:
+            _z2 = np.stack([_zero_sum(post['runner_dnf_raw'].values[c]).astype(np.float32) for c in range(post.sizes['chain'])])
+            if 'rho_runner' in post:
+                _r = _sc('rho_runner')
+                _w = _sc('omega_dnf') * (_r * _z1 + np.sqrt(1 - _r**2) * _z2)
+                if 'dnf_runner_pace_quadratic' in post:
+                    _w = _w + _sc('dnf_runner_pace_quadratic') * (_z1**2 - 1)
+            else:
+                _w = _sc('omega_dnf') * _z2
+            _out['runner_dnf_effect'] = _w
+        _dims = ('chain', 'draw', 'runner')
+        _post = post.drop_vars([v for v in ('runner_raw', 'runner_dnf_raw') if v in post])
+        for _k, _v in _out.items():
+            _post[_k] = xr.DataArray(_v, dims=_dims, coords={'chain': post['chain'], 'draw': post['draw'], 'runner': post['runner']})
+        return _post
+
+
     # Bump when the model changes, so a cached trace is never reused for a different model.
     _MODEL_VERSION = 1
 
@@ -328,13 +365,11 @@ def _(
         _path = _cache_dir / f'runner_{label}_v{_MODEL_VERSION}_{_key}.nc'
         if _path.exists():
             return az.from_netcdf(_path)
-        mo.output.replace(mo.callout(mo.md(f"Sampling the {label} model since {datetime.now():%H:%M} (about {minutes} minutes)."), kind='info'))
-        with model:
-            _trace = pm.sample(draws=DRAWS, tune=1000, chains=4, nuts_sampler='nutpie', random_seed=42, progressbar=True)
-        # store runner effects as float32 without the raw (standardized) ones, to keep the trace small
-        _post = _trace.posterior.drop_vars([v for v in ('runner_raw',) if v in _trace.posterior])
-        if 'runner_effect' in _post:
-            _post['runner_effect'] = _post['runner_effect'].astype(np.float32)
+        _keep = [v.name for v in model.free_RVs + model.deterministics if v.name not in _PER_RUNNER]
+        _gb = check_memory(model, _keep, chains=4, draws=DRAWS)
+        mo.output.replace(mo.callout(mo.md(f"Sampling the {label} model since {datetime.now():%H:%M} (about {minutes} minutes, about {_gb:.0f} GB)."), kind='info'))
+        _trace = sample_lean(model, _keep, draws=DRAWS, random_seed=42, progressbar=True)
+        _post = _derive_runner_effects(_trace.posterior)
         _trace = az.InferenceData(posterior=_post, sample_stats=_trace.sample_stats)
         _trace.to_netcdf(_path)
         return _trace

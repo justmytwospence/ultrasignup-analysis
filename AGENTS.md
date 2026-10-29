@@ -77,6 +77,14 @@ a model version and a data hash.
   `HalfNormal` scales and `LKJCorr` instead). Give long cells a `mo.callout` beacon with the
   start time and expected duration. For final inference too slow locally, the `Dockerfile`
   builds a RunPod JAX-CUDA image (numpyro is fine there).
+- Large fits (runner effects): sample through `utils.sampling.sample_lean`, which drops warm-up
+  draws and per-runner deterministics (derive them after sampling) and refuses to start when
+  `check_memory` says the draws will not fit. The old way needed ~72 GB for 2.2 on the (3, 500)
+  core and macOS killed the kernel. Before a heavy fit, restart idle kernels and marimo servers:
+  a server with big plotly outputs (0.1) can hold 30+ GB of compressed memory by itself.
+- Unattended runs: call marimo-pair with `--url` and `--file` spelled out in the tool call
+  (pi-marimo then opens a headless session if no tab is open, also after a kernel restart), and
+  wait with `bg_wait marimo:<file>`, which ends within seconds if the kernel disconnects.
 - Dev k-core: (3, 840) on every start at 42 km or longer (28 courses, about 8,500 runners),
   chosen in 0.1; check `n_courses` after subsetting, and loosen for final fits. The full (α, β) sweep takes about a minute; its cache key includes a data
   fingerprint.
