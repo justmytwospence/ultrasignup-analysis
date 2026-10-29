@@ -465,7 +465,10 @@ def _(
             _trace = sample_lean(model, _keep, draws=DRAWS, random_seed=42, progressbar=True, store_dir=_store)
         _post = _derive_runner_effects(_trace.posterior)
         _trace = az.InferenceData(posterior=_post, sample_stats=_trace.sample_stats)
-        netcdf_safe(_trace).to_netcdf(_path)
+        # write then rename, so a failed save never leaves a file that looks like a cached trace
+        _tmp = _path.with_suffix('.nc.tmp')
+        netcdf_safe(_trace).to_netcdf(_tmp)
+        _tmp.replace(_path)
         shutil.rmtree(_store)
         return az.from_netcdf(_path)
 
