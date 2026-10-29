@@ -575,20 +575,21 @@ def _(mo):
     mo.md(r"""
     ## Handoff
 
-    The chosen core is saved as `data/cache/0.1_kcore/core.parquet` (one row per runner and course in the core, plus the α and β used), with the closure flags available by re-running `subset_kcore_data` on the same input.
+    The chosen core is saved as `data/cache/0.1_kcore/core.parquet` (one row per runner and course in the core, plus the α and β used), with the closure flags available by re-running `subset_kcore_data` on the same input. A larger core for final fits, (3, 500) with 172 courses, is saved as `core_3_500.parquet`; later notebooks pick a core with their `CORE` constant.
     """)
     return
 
 
 @app.cell
-def _(Path, alpha, beta, kcore_data):
-    core_path = Path(__file__).resolve().parent.parent / 'data' / 'cache' / '0.1_kcore' / 'core.parquet'
-    core_members = (
-        kcore_data[['participant_id', 'name']].drop_duplicates()
-        .assign(alpha=alpha, beta=beta)
-    )
-    core_members.to_parquet(core_path, index=False)
-    print(f"Saved {core_members['participant_id'].nunique():,} runners x {core_members['name'].nunique()} courses to {core_path.name}")
+def _(Path, alpha, beta, kcore_data, results, subset_kcore_data):
+    _out = Path(__file__).resolve().parent.parent / 'data' / 'cache' / '0.1_kcore'
+    core_members = kcore_data[['participant_id', 'name']].drop_duplicates().assign(alpha=alpha, beta=beta)
+    core_members.to_parquet(_out / 'core.parquet', index=False)
+    # Larger cores for final fits, saved alongside the dev core (core_<alpha>_<beta>.parquet).
+    for _a, _b in [(3, 500)]:
+        _flagged = subset_kcore_data(results, alpha=_a, beta=_b)
+        _flagged.loc[_flagged['in_kcore'], ['participant_id', 'name']].drop_duplicates().assign(alpha=_a, beta=_b).to_parquet(_out / f'core_{_a}_{_b}.parquet', index=False)
+    print(f"Saved the dev core ({core_members['participant_id'].nunique():,} runners x {core_members['name'].nunique()} courses) and the final-fit cores")
     return
 
 

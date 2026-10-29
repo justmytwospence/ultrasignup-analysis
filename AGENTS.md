@@ -44,7 +44,7 @@ uv run pytest -m live   # contract check against the real mirror
 
 Notebooks are named `<track>.<step>_<topic>.py`: track 0 data preparation (`0.1_kcore`),
 track 1 finish times (`1.1_finish_courses`, `1.2_finish_runners`), track 2 DNFs
-(`2.1_dnf_reporting`, `2.2_dnf_observed`, then `2.3_dnf_unobserved`, not yet migrated).
+(`2.1_dnf_reporting`, `2.2_dnf_observed`, `2.3_dnf_unobserved`).
 Each step adds one thing to the earlier steps of its track; a new model gets the next step
 number (`1.3_...`), and steps past 9 are fine (`1.10`). Each notebook keeps its traces and
 writes its output for later ones in `data/cache/<notebook stem>/`: `0.1_kcore/core.parquet`
