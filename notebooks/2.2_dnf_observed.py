@@ -55,6 +55,7 @@ def _():
     from scipy.special import expit
 
     from utils import finish_time_model as ftm
+    from utils.loo import compare_table
     from utils.sampling import check_memory, load_store, netcdf_safe, sample_lean
     from utils.data_processing import load_results, process_results
 
@@ -73,6 +74,7 @@ def _():
         OUT,
         az,
         check_memory,
+        compare_table,
         datetime,
         expit,
         ftm,
@@ -577,10 +579,11 @@ def _(
 
 
     _fig, _axes = plt.subplots(2, 2, figsize=(15, 10))
-    _order = np.argsort(pd.Series(dnf).groupby(s_course).mean().to_numpy())
-    _rank = np.empty_like(_order)
-    _rank[_order] = np.arange(len(_order))
-    _panel(_axes[0, 0], _rank[s_course], 'DNF rate per course (sorted by observed)', '', lambda l: [str(course_label[_order[i]])[:30] for i in l])
+    # courses with reporting starts, ranked by observed DNF rate (some core courses have none)
+    _order = pd.Series(dnf).groupby(s_course).mean().sort_values().index.to_numpy()
+    _rank = pd.Series(np.arange(len(_order)), index=_order).reindex(s_course).to_numpy()
+    _labels = (lambda l: [str(course_label[_order[i]])[:30] for i in l]) if len(_order) <= 40 else None
+    _panel(_axes[0, 0], _rank, f'DNF rate per course ({len(_order)} with reporting starts, sorted by observed)', '' if _labels else 'Course rank', _labels)
     # Only starts whose runner finished some *other* start: a runner with no finish has a pace
     # effect informed only through the correlation, and selecting on any finish would select on
     # this start's own outcome.
@@ -653,7 +656,7 @@ def _(CORE, build_dnf_model, dnf_trace, fit_dnf):
 
 
 @app.cell
-def _(az, dnf, dnf_comparison_traces, dnf_logit, np, xr):
+def _(az, compare_table, dnf, dnf_comparison_traces, dnf_logit, np, xr):
     def _with_loglik(trace):
         _post = trace.posterior.isel(draw=slice(None, None, 8))
         _eta = dnf_logit(_post)
@@ -665,7 +668,7 @@ def _(az, dnf, dnf_comparison_traces, dnf_logit, np, xr):
 
     dnf_loo_data = {_name: _with_loglik(_t) for _name, _t in dnf_comparison_traces.items()}
     dnf_loos = {_name: az.loo(_d, pointwise=True) for _name, _d in dnf_loo_data.items()}
-    dnf_comparison = az.compare(dnf_loos)[['rank', 'elpd_loo', 'p_loo', 'elpd_diff', 'se', 'dse']].assign(
+    dnf_comparison = compare_table(dnf_loos).assign(
         starts_k_over_0_7=lambda d: [int((dnf_loos[_m].pareto_k > 0.7).sum()) for _m in d.index]
     )
     dnf_comparison.round(1)

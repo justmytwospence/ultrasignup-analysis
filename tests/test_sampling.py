@@ -52,4 +52,16 @@ def test_store_recovery_and_netcdf(tmp_path):
     assert sampling.load_store(store, draws=31) is None
     trace = sampling.load_store(store, draws=30)
     assert trace.posterior.sizes["draw"] == 30
+    assert "unconstrained_parameter" not in trace.sample_stats.dims
     sampling.netcdf_safe(trace).to_netcdf(tmp_path / "t.nc")
+
+
+def test_compare_table_single_and_pair():
+    from utils.loo import compare_table
+    import arviz as az
+    d = az.load_arviz_data("centered_eight")
+    loo = az.loo(d)
+    one = compare_table({"a": loo})
+    assert list(one.index) == ["a"] and one.loc["a", "elpd_diff"] == 0
+    two = compare_table({"a": loo, "b": loo})
+    assert len(two) == 2

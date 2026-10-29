@@ -96,8 +96,25 @@ def sample_lean(model: pm.Model, var_names: list[str], *, draws: int, tune: int 
     if got != draws:
         # nutpie returns what it has when sampling is interrupted; never let that be cached
         raise RuntimeError(f"Sampling returned {got} of {draws} draws per chain (interrupted?); not using this trace.")
-    return trace
+    return drop_parameter_stats(trace) if store_dir is not None else trace
 
+
+
+def drop_parameter_stats(idata):
+    """Drop nutpie's per-parameter diagnostics (gradient, unconstrained draw, mass matrix,
+    divergence locations: one value per parameter per draw each) that the zarr path writes;
+    with a few hundred thousand parameters each is several GB."""
+    import arviz as az
+
+    groups = {}
+    for group in ("posterior", "sample_stats"):
+        ds = idata[group]
+        big = [name for name, var in ds.data_vars.items() if "unconstrained_parameter" in var.dims]
+        ds = ds.drop_vars(big)
+        if "unconstrained_parameter" in ds.coords:
+            ds = ds.drop_vars("unconstrained_parameter")
+        groups[group] = ds
+    return az.InferenceData(**groups)
 
 
 def load_store(store_dir: str | Path, draws: int):
@@ -116,7 +133,7 @@ def load_store(store_dir: str | Path, draws: int):
         return None
     if post.sizes.get("draw") != draws or stats.sizes.get("draw") != draws:
         return None
-    return az.InferenceData(posterior=post, sample_stats=stats)
+    return drop_parameter_stats(az.InferenceData(posterior=post, sample_stats=stats))
 
 
 def netcdf_safe(idata):
@@ -135,4 +152,4 @@ def netcdf_safe(idata):
     return idata
 
 
-__all__ = ["available_bytes", "stored_values", "check_memory", "sample_lean", "load_store", "netcdf_safe"]
+__all__ = ["available_bytes", "stored_values", "check_memory", "sample_lean", "load_store", "netcdf_safe", "drop_parameter_stats"]

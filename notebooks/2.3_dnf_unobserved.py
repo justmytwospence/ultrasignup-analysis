@@ -58,6 +58,7 @@ def _():
     from scipy.special import expit, log_expit
 
     from utils import finish_time_model as ftm
+    from utils.loo import compare_table
     from utils.sampling import check_memory, load_store, netcdf_safe, sample_lean
     from utils.data_processing import load_results, process_results
 
@@ -76,6 +77,7 @@ def _():
         OUT,
         az,
         check_memory,
+        compare_table,
         datetime,
         expit,
         ftm,
@@ -581,6 +583,7 @@ def _(CORE, build_unobserved_model, fit_unobserved, unobserved_trace):
 @app.cell
 def _(
     az,
+    compare_table,
     dnf,
     flat_draws,
     np,
@@ -621,7 +624,7 @@ def _(
 
 
     unobserved_loos = {_n: _loo(_d) for _n, _d in unobserved_loo_data.items()}
-    unobserved_comparison = az.compare(unobserved_loos)[['rank', 'elpd_loo', 'p_loo', 'elpd_diff', 'se', 'dse']].assign(
+    unobserved_comparison = compare_table(unobserved_loos).assign(
         observations_k_over_0_7=lambda d: [int((unobserved_loos[_m].pareto_k > 0.7).sum()) for _m in d.index]
     )
     unobserved_comparison.round(1)

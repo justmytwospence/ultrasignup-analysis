@@ -56,6 +56,7 @@ def _():
     import matplotlib.pyplot as plt
 
     from utils import finish_time_model as ftm
+    from utils.loo import compare_table
     from utils.sampling import check_memory, load_store, netcdf_safe, sample_lean
     from utils.data_processing import load_results, process_results
 
@@ -71,6 +72,7 @@ def _():
         DRAWS,
         az,
         check_memory,
+        compare_table,
         datetime,
         ftm,
         hashlib,
@@ -532,6 +534,7 @@ def _(build_runner_model, fit_runner, runner_trace):
 @app.cell
 def _(
     az,
+    compare_table,
     log_pace,
     np,
     predicted_mean,
@@ -559,7 +562,7 @@ def _(
     single_finish = np.bincount(runner_idx)[runner_idx] == 1
     runner_loo_data = {_name: _with_loglik(_t) for _name, _t in runner_comparison_traces.items()}
     runner_loos = {_name: az.loo(_d, pointwise=True) for _name, _d in runner_loo_data.items()}
-    runner_comparison = az.compare(runner_loos)[['rank', 'elpd_loo', 'p_loo', 'elpd_diff', 'se', 'dse']].assign(
+    runner_comparison = compare_table(runner_loos).assign(
         finishes_k_over_0_7=lambda d: [int((runner_loos[_m].pareto_k > 0.7).sum()) for _m in d.index]
     )
     runner_comparison.round(1)
