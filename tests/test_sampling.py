@@ -44,3 +44,12 @@ def test_sample_lean_on_disk(tmp_path):
     assert trace.posterior.sizes["draw"] == 40
     assert "effect" not in trace.posterior
     assert any(store.rglob("*"))
+
+
+def test_store_recovery_and_netcdf(tmp_path):
+    store = tmp_path / "zarr"
+    sampling.sample_lean(_model(), ["s", "raw"], draws=30, tune=30, chains=2, store_dir=store, random_seed=4, progressbar=False)
+    assert sampling.load_store(store, draws=31) is None
+    trace = sampling.load_store(store, draws=30)
+    assert trace.posterior.sizes["draw"] == 30
+    sampling.netcdf_safe(trace).to_netcdf(tmp_path / "t.nc")

@@ -55,7 +55,7 @@ def _():
     from scipy.special import expit
 
     from utils import finish_time_model as ftm
-    from utils.sampling import check_memory, sample_lean
+    from utils.sampling import check_memory, load_store, netcdf_safe, sample_lean
     from utils.data_processing import load_results, process_results
 
     CACHE = Path(__file__).resolve().parent.parent / 'data' / 'cache'
@@ -78,6 +78,8 @@ def _():
         ftm,
         hashlib,
         load_results,
+        load_store,
+        netcdf_safe,
         np,
         pd,
         plt,
@@ -413,8 +415,10 @@ def _(
     f_course,
     f_runner,
     hashlib,
+    load_store,
     log_pace,
     mo,
+    netcdf_safe,
     np,
     runner_gender,
     s_age,
@@ -466,14 +470,16 @@ def _(
         _path = OUT / f'dnf_{label}_v{_MODEL_VERSION}_{_key}.nc'
         if _path.exists():
             return az.from_netcdf(_path)
-        _keep = [v.name for v in model.free_RVs + model.deterministics if v.name not in _PER_RUNNER]
-        _gb = check_memory(model, _keep, chains=4, draws=DRAWS, on_disk=True)
-        mo.output.replace(mo.callout(mo.md(f"Sampling the {label} model since {datetime.now():%H:%M} (about {minutes} minutes, about {_gb:.0f} GB)."), kind='info'))
         _store = _path.with_suffix('.zarr')  # draws stream here, not into memory
-        _trace = sample_lean(model, _keep, draws=DRAWS, random_seed=42, progressbar=True, store_dir=_store)
+        _trace = load_store(_store, DRAWS)    # a finished store whose save failed: no need to resample
+        if _trace is None:
+            _keep = [v.name for v in model.free_RVs + model.deterministics if v.name not in _PER_RUNNER]
+            _gb = check_memory(model, _keep, chains=4, draws=DRAWS, on_disk=True)
+            mo.output.replace(mo.callout(mo.md(f"Sampling the {label} model since {datetime.now():%H:%M} (about {minutes} minutes, about {_gb:.0f} GB)."), kind='info'))
+            _trace = sample_lean(model, _keep, draws=DRAWS, random_seed=42, progressbar=True, store_dir=_store)
         _post = _derive_runner_effects(_trace.posterior)
         _trace = az.InferenceData(posterior=_post, sample_stats=_trace.sample_stats)
-        _trace.to_netcdf(_path)
+        netcdf_safe(_trace).to_netcdf(_path)
         shutil.rmtree(_store)
         return az.from_netcdf(_path)
 

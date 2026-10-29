@@ -20,6 +20,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import numpy as np
 import pymc as pm
 
 BYTES_PER_VALUE = 8
@@ -98,4 +99,40 @@ def sample_lean(model: pm.Model, var_names: list[str], *, draws: int, tune: int 
     return trace
 
 
-__all__ = ["available_bytes", "stored_values", "check_memory", "sample_lean"]
+
+def load_store(store_dir: str | Path, draws: int):
+    """The posterior and sample stats of a finished zarr store from `sample_lean`, or None if it
+    is missing or incomplete. Lets a fit whose save failed be recovered without resampling."""
+    import arviz as az
+    import xarray as xr
+
+    store_dir = Path(store_dir)
+    if not store_dir.exists():
+        return None
+    try:
+        tree = xr.open_datatree(str(store_dir), engine="zarr", consolidated=False)
+        post, stats = tree["posterior"].to_dataset(), tree["sample_stats"].to_dataset()
+    except (KeyError, OSError, ValueError):
+        return None
+    if post.sizes.get("draw") != draws or stats.sizes.get("draw") != draws:
+        return None
+    return az.InferenceData(posterior=post, sample_stats=stats)
+
+
+def netcdf_safe(idata):
+    """Load string coordinates and variables (zarr-backed traces carry numpy StringDType, which
+    may only show once loaded) as plain object strings, which netCDF can store."""
+    for group in idata.groups():
+        ds = idata[group]
+        fixed = {}
+        for name, var in ds.variables.items():
+            if var.dtype.kind in "OTU":
+                fixed[name] = (var.dims, np.asarray([str(x) for x in np.asarray(var.values).ravel()], dtype=object).reshape(var.shape))
+        if fixed:
+            coords = {k: v for k, v in fixed.items() if k in ds.coords}
+            data = {k: v for k, v in fixed.items() if k not in ds.coords}
+            idata[group] = ds.assign_coords(coords).assign(data)
+    return idata
+
+
+__all__ = ["available_bytes", "stored_values", "check_memory", "sample_lean", "load_store", "netcdf_safe"]
