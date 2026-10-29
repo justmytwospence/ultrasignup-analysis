@@ -712,7 +712,12 @@ def _(
     _r = _expit(_logit_r)
     _p_rep = _r * _q0 * (1 - _d) / (_r * _q0 * (1 - _d) + 1 - _r)
     edition_reporting = editions[['did', 'course_id', 'series_id', 'year', 'distance_km', 'n_finishers', 'kind']].assign(
-        p_reports=np.where(editions['kind'] == 'unknown', _p_rep.mean(axis=1), 1.0)
+        p_reports=np.where(editions['kind'] == 'unknown', _p_rep.mean(axis=1), 1.0),
+        # Before seeing the edition's outcome: P(reports) from year, series and distance, and
+        # P(lists DNS rows | reports). Later models that re-weigh an edition's zero DNFs need these,
+        # not p_reports, which already conditions on the zero.
+        p_reports_prior=_r.mean(axis=1),
+        p_lists_dns=_d.mean(axis=1),
     )
 
     _fig, (_ax1, _ax2) = plt.subplots(1, 2, figsize=(12, 4))
@@ -736,7 +741,7 @@ def _(mo):
     mo.md(r"""
     ## Handoff
 
-    Each edition's probability of reporting DNFs is saved as `data/cache/2.1_dnf_reporting/edition_reporting.parquet` (1 for editions known to report, the posterior mean for unknown ones), with its course, series, year, distance and finishers. 2.3 uses it as the weight on an edition's zero-DNF count.
+    Each edition's probability of reporting DNFs is saved as `data/cache/2.1_dnf_reporting/edition_reporting.parquet` (1 for editions known to report, the posterior mean for unknown ones), with its course, series, year, distance and finishers. It also saves `p_reports_prior` (the probability of reporting from year, series and distance alone, before seeing the edition's DNF count) and `p_lists_dns` (the probability a reporting edition lists DNS rows), which 2.3 combines with its own DNF model. 2.3 uses it as the weight on an edition's zero-DNF count.
     """)
     return
 
