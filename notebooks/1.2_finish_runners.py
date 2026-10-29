@@ -41,6 +41,7 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _():
+    import shutil
     import hashlib
     from datetime import datetime
     from pathlib import Path
@@ -81,6 +82,7 @@ def _():
         process_results,
         pytensor,
         sample_lean,
+        shutil,
         xr,
     )
 
@@ -319,6 +321,7 @@ def _(
     runner_idx,
     runner_model,
     sample_lean,
+    shutil,
     xr,
 ):
     _key = hashlib.sha1(b''.join(np.ascontiguousarray(a).tobytes() for a in (log_pace, course_idx, runner_idx, gender_idx, age_z))).hexdigest()[:12]
@@ -366,13 +369,15 @@ def _(
         if _path.exists():
             return az.from_netcdf(_path)
         _keep = [v.name for v in model.free_RVs + model.deterministics if v.name not in _PER_RUNNER]
-        _gb = check_memory(model, _keep, chains=4, draws=DRAWS)
+        _gb = check_memory(model, _keep, chains=4, draws=DRAWS, on_disk=True)
         mo.output.replace(mo.callout(mo.md(f"Sampling the {label} model since {datetime.now():%H:%M} (about {minutes} minutes, about {_gb:.0f} GB)."), kind='info'))
-        _trace = sample_lean(model, _keep, draws=DRAWS, random_seed=42, progressbar=True)
+        _store = _path.with_suffix('.zarr')  # draws stream here, not into memory
+        _trace = sample_lean(model, _keep, draws=DRAWS, random_seed=42, progressbar=True, store_dir=_store)
         _post = _derive_runner_effects(_trace.posterior)
         _trace = az.InferenceData(posterior=_post, sample_stats=_trace.sample_stats)
         _trace.to_netcdf(_path)
-        return _trace
+        shutil.rmtree(_store)
+        return az.from_netcdf(_path)
 
 
     runner_trace = fit_runner(runner_model, 'full', 5)

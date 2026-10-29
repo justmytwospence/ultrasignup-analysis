@@ -25,6 +25,10 @@ def test_check_memory_refuses_when_too_big(monkeypatch):
     with pytest.raises(MemoryError):
         sampling.check_memory(_model(), ["s"], chains=4, draws=10**8)
     assert sampling.check_memory(_model(), ["s"], chains=4, draws=100, reserve_gb=1) < 1
+    # in memory, warm-up draws count too
+    on_disk = sampling.check_memory(_model(), ["s"], chains=4, draws=1000, tune=1000, reserve_gb=0)
+    in_mem = sampling.check_memory(_model(), ["s"], chains=4, draws=1000, tune=1000, on_disk=False, reserve_gb=0)
+    assert in_mem > 3 * on_disk
 
 
 def test_sample_lean_drops_warmup_and_unlisted():
@@ -32,3 +36,11 @@ def test_sample_lean_drops_warmup_and_unlisted():
     assert "effect" not in trace.posterior
     assert trace.posterior.sizes["draw"] == 50
     assert "warmup_posterior" not in trace.groups()
+
+
+def test_sample_lean_on_disk(tmp_path):
+    store = tmp_path / "zarr"
+    trace = sampling.sample_lean(_model(), ["s", "raw"], draws=40, tune=40, chains=2, store_dir=store, random_seed=2, progressbar=False)
+    assert trace.posterior.sizes["draw"] == 40
+    assert "effect" not in trace.posterior
+    assert any(store.rglob("*"))

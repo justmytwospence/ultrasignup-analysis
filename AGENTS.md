@@ -77,9 +77,10 @@ a model version and a data hash.
   `HalfNormal` scales and `LKJCorr` instead). Give long cells a `mo.callout` beacon with the
   start time and expected duration. For final inference too slow locally, the `Dockerfile`
   builds a RunPod JAX-CUDA image (numpyro is fine there).
-- Large fits (runner effects): sample through `utils.sampling.sample_lean`, which drops warm-up
-  draws and per-runner deterministics (derive them after sampling) and refuses to start when
-  `check_memory` says the draws will not fit. The old way needed ~72 GB for 2.2 on the (3, 500)
+- Large fits (runner effects): sample through `utils.sampling.sample_lean` with `store_dir`, which
+  streams draws to a zarr store on disk (nutpie otherwise holds every draw, warm-up included, in
+  memory at ~2.75x their size), leaves per-runner deterministics out (derive them after sampling),
+  refuses to start when `check_memory` says it will not fit, and rejects interrupted traces. The old way needed ~72 GB for 2.2 on the (3, 500)
   core and macOS killed the kernel. Before a heavy fit, restart idle kernels and marimo servers:
   a server with big plotly outputs (0.1) can hold 30+ GB of compressed memory by itself.
 - Unattended runs: call marimo-pair with `--url` and `--file` spelled out in the tool call

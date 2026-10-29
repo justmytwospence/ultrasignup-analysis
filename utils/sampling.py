@@ -5,7 +5,9 @@ nutpie holds every stored draw in memory until sampling ends: all free (unconstr
 parameters, plus whatever constrained or deterministic variables are listed in `var_names`.
 For models with a few hundred thousand runner effects that is gigabytes per chain, so:
 
-- warm-up draws are not kept (`save_warmup=False`),
+- draws stream to a zarr store on disk (`store_dir`) instead of nutpie's in-memory trace, which
+  holds warm-up draws too until sampling ends,
+- warm-up draws are not returned (`save_warmup=False`),
 - per-runner deterministics are left out of `var_names` and derived after sampling,
 - `check_memory` estimates the peak before sampling and refuses to start if it would not fit,
   instead of letting macOS kill the kernel halfway through.
@@ -14,14 +16,15 @@ For models with a few hundred thousand runner effects that is gigabytes per chai
 from __future__ import annotations
 
 import math
+import shutil
 import subprocess
+from pathlib import Path
 
 import pymc as pm
 
 BYTES_PER_VALUE = 8
-# nutpie's buffers, the conversion to InferenceData and our float32 copies of derived
-# effects all exist at once at the end of sampling.
-OVERHEAD = 2.5
+# nutpie's in-memory (Arrow) trace, measured: about 2.75x the raw size of the draws it holds.
+IN_MEMORY_OVERHEAD = 2.75
 
 
 def available_bytes() -> int:
@@ -49,26 +52,50 @@ def stored_values(model: pm.Model, var_names: list[str]) -> int:
     return n
 
 
-def check_memory(model: pm.Model, var_names: list[str], chains: int, draws: int, reserve_gb: float = 6.0) -> float:
-    """Estimated peak memory of sampling in GB; raises MemoryError if it exceeds what is
-    available minus `reserve_gb` (left for the OS, the server and other kernels)."""
-    need = stored_values(model, var_names) * BYTES_PER_VALUE * chains * draws * OVERHEAD
+def check_memory(model: pm.Model, var_names: list[str], chains: int, draws: int, tune: int = 1000,
+                 on_disk: bool = True, reserve_gb: float = 6.0) -> float:
+    """Estimated peak memory in GB; raises MemoryError if it exceeds what is available minus
+    `reserve_gb` (left for the OS, the server and other kernels).
+
+    In memory, nutpie keeps every draw, warm-up included, until sampling ends (`save_warmup`
+    only filters at conversion), at about 2.75x the raw size (measured). On disk (zarr), the
+    peak is reading the posterior back once to derive effects and save the trace.
+    """
+    values = stored_values(model, var_names) * BYTES_PER_VALUE * chains
+    need = values * draws * 1.5 if on_disk else values * (draws + tune) * IN_MEMORY_OVERHEAD
     have = available_bytes() - reserve_gb * 2**30
     if need > have:
         raise MemoryError(
             f"Sampling needs about {need / 2**30:.1f} GB but only {max(have, 0) / 2**30:.1f} GB is available "
-            f"(after a {reserve_gb:g} GB reserve). Restart idle notebook kernels, or reduce draws."
+            f"(after a {reserve_gb:g} GB reserve). Restart idle notebook kernels and marimo servers, or reduce draws."
         )
     return need / 2**30
 
 
-def sample_lean(model: pm.Model, var_names: list[str], *, draws: int, tune: int = 1000, chains: int = 4, **kwargs):
+def sample_lean(model: pm.Model, var_names: list[str], *, draws: int, tune: int = 1000, chains: int = 4,
+                store_dir: str | Path | None = None, **kwargs):
     """pm.sample with nutpie, keeping only post-warm-up draws of the free parameters and
-    `var_names`. Checks memory first."""
-    check_memory(model, var_names, chains, draws)
+    `var_names`. With `store_dir`, draws stream to a zarr store there instead of memory (the
+    returned trace reads from it lazily; delete the directory once the trace is saved).
+    Checks memory first, and refuses a trace with fewer draws than asked (interrupted)."""
+    check_memory(model, var_names, chains, draws, tune, on_disk=store_dir is not None)
+    nuts_kwargs = {"save_warmup": False}
+    if store_dir is not None:
+        import nutpie
+
+        store_dir = Path(store_dir)
+        if store_dir.exists():
+            shutil.rmtree(store_dir)
+        store_dir.mkdir(parents=True)
+        nuts_kwargs["zarr_store"] = nutpie.zarr_store.LocalStore(str(store_dir))
     with model:
-        return pm.sample(draws=draws, tune=tune, chains=chains, nuts_sampler="nutpie", var_names=var_names,
-                         nuts_sampler_kwargs={"save_warmup": False}, **kwargs)
+        trace = pm.sample(draws=draws, tune=tune, chains=chains, nuts_sampler="nutpie", var_names=var_names,
+                          nuts_sampler_kwargs=nuts_kwargs, **kwargs)
+    got = trace.posterior.sizes["draw"]
+    if got != draws:
+        # nutpie returns what it has when sampling is interrupted; never let that be cached
+        raise RuntimeError(f"Sampling returned {got} of {draws} draws per chain (interrupted?); not using this trace.")
+    return trace
 
 
 __all__ = ["available_bytes", "stored_values", "check_memory", "sample_lean"]
