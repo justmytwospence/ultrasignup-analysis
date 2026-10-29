@@ -49,6 +49,7 @@ def _():
     import numpy as np
     import pandas as pd
     import pymc as pm
+    import pytensor
     import scipy.sparse as sp
     import xarray as xr
     import matplotlib.pyplot as plt
@@ -57,8 +58,16 @@ def _():
     from utils.data_processing import load_results, process_results
 
     CACHE = Path(__file__).resolve().parent.parent / 'data' / 'cache'
+
+    # Which 0.1 core to fit: 'core' is the dev core (3, 840), 28 courses, minutes;
+    # 'core_3_500' is the final-fit core, 172 courses, hours (fewer draws to bound memory).
+    CORE = 'core_3_500'
+    DRAWS = 1000 if CORE == 'core' else 500
+
     return (
         CACHE,
+        CORE,
+        DRAWS,
         az,
         datetime,
         ftm,
@@ -69,6 +78,7 @@ def _():
         plt,
         pm,
         process_results,
+        pytensor,
         xr,
     )
 
@@ -78,14 +88,14 @@ def _(mo):
     mo.md(r"""
     ## Data
 
-    Every finisher at the 28 courses of 0.1's core (`0.1_kcore/core.parquet`), with 1.1's course effects (`1.1_finish_courses/course_effects.parquet`) for comparison.
+    Every finisher at the courses of 0.1's core (`CORE`) (`0.1_kcore/core.parquet`), with 1.1's course effects (`1.1_finish_courses/course_effects.parquet`) for comparison.
     """)
     return
 
 
 @app.cell
-def _(CACHE, ftm, load_results, pd, process_results):
-    _core = pd.read_parquet(CACHE / '0.1_kcore' / 'core.parquet')
+def _(CACHE, CORE, ftm, load_results, pd, process_results):
+    _core = pd.read_parquet(CACHE / '0.1_kcore' / f'{CORE}.parquet')
     _results = process_results(load_results())
     finishers = _results[_results['finished'] & _results['name'].isin(_core['name'].unique())].reset_index(drop=True)
     nb1_effects = pd.read_parquet(CACHE / '1.1_finish_courses' / 'course_effects.parquet').set_index('course_id')
@@ -291,6 +301,7 @@ def _(mo):
 @app.cell
 def _(
     CACHE,
+    DRAWS,
     SCALARS,
     age_z,
     az,
@@ -319,7 +330,12 @@ def _(
             return az.from_netcdf(_path)
         mo.output.replace(mo.callout(mo.md(f"Sampling the {label} model since {datetime.now():%H:%M} (about {minutes} minutes)."), kind='info'))
         with model:
-            _trace = pm.sample(draws=1000, tune=1000, chains=4, nuts_sampler='nutpie', random_seed=42, progressbar=True)
+            _trace = pm.sample(draws=DRAWS, tune=1000, chains=4, nuts_sampler='nutpie', random_seed=42, progressbar=True)
+        # store runner effects as float32 without the raw (standardized) ones, to keep the trace small
+        _post = _trace.posterior.drop_vars([v for v in ('runner_raw',) if v in _trace.posterior])
+        if 'runner_effect' in _post:
+            _post['runner_effect'] = _post['runner_effect'].astype(np.float32)
+        _trace = az.InferenceData(posterior=_post, sample_stats=_trace.sample_stats)
         _trace.to_netcdf(_path)
         return _trace
 
@@ -512,10 +528,32 @@ def _(mo):
 
 
 @app.cell
-def _(SCALARS, az, ftm, np, pd, pm, runner_loo_data, runner_model):
+def _(
+    SCALARS,
+    az,
+    ftm,
+    np,
+    pd,
+    pm,
+    pytensor,
+    runner_loo_data,
+    runner_model,
+    xr,
+):
     _idata = runner_loo_data['runner effects'].copy()
-    pm.compute_log_prior(_idata, model=runner_model)
-    _chosen = [v for v in SCALARS if v in _idata.log_prior]
+    _chosen = [v for v in SCALARS if v in _idata.posterior]
+    # Log density of each chosen prior at the posterior draws (each has fixed parameters, so it is
+    # evaluated on its own; the stored trace drops the raw runner effects compute_log_prior needs).
+    _log_prior = {}
+    for _v in _chosen:
+        _rv = runner_model[_v]
+        _val = _rv.type()
+        _fn = pytensor.function([_val], pm.logp(_rv, _val))
+        _post = _idata.posterior[_v]
+        _log_prior[_v] = xr.DataArray(
+            np.array([_fn(np.asarray(x, dtype=_rv.dtype)) for x in _post.values.reshape(-1, *_post.shape[2:])]).reshape(_post.shape),
+            dims=_post.dims, coords=_post.coords)
+    _idata.add_groups(log_prior=xr.Dataset(_log_prior))
     _s = az.psens(_idata, component='prior', component_var_names=_chosen, var_names=SCALARS)
     _rows = []
     for _v in SCALARS:
