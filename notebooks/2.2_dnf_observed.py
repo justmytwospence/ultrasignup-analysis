@@ -18,11 +18,11 @@ def _(mo):
 
     Adds DNFs to the runner-effect finish-time model (1.2). Each start ends in a finish or a DNF; the probability of a DNF depends on distance, gender, age, the course and the runner. The course's DNF tendency is correlated with its pace effect, and so is the runner's: that is the question this model answers. Do slower runners drop more often, and is a hard course's high DNF rate partly a matter of who starts it?
 
-    $$\text{logit}\, P(\text{DNF}_i) = \ell_c + \tfrac{\pm 1}{2}\delta + \kappa_1 A_i + \kappa_2 A_i^2 + w_r$$
+    $$\text{logit}\, P(\text{DNF}_i) = \ell_c + \tfrac{\pm 1}{2}\delta + \kappa_1 A_i + \kappa_2 A_i^2 + w_r + q\,(v_r^2/\omega^2 - 1)$$
 
     $$\ell_c \sim N\!\big(\mu + \lambda x_c + \tau_d \rho_c\, u_c / \tau,\; \tau_d^2 (1 - \rho_c^2)\big), \qquad (v_r, w_r) \sim N\!\left(0, \begin{pmatrix}\omega^2 & \rho_r\, \omega\, \omega_d \\ \rho_r\, \omega\, \omega_d & \omega_d^2\end{pmatrix}\right)$$
 
-    where $u_c$ is the course's pace effect and $v_r$ the runner's pace effect from the finish-time part, which is 1.2's model unchanged. The DNF part uses only editions that report their DNFs; finish times come from every edition, since a finish time is valid whether or not DNFs were posted. Editions that do not report are 2.3's subject.
+    where $u_c$ is the course's pace effect and $v_r$ the runner's pace effect from the finish-time part, which is 1.2's model unchanged. The curvature $q$ lets both the fastest and the slowest runners drop more often than a straight line in pace allows: the posterior predictive check of the linear version showed exactly that. The DNF part uses only editions that report their DNFs; finish times come from every edition, since a finish time is valid whether or not DNFs were posted. Editions that do not report are 2.3's subject.
 
     What it leaves out: DNFs in editions that do not report them, edition effects (a hot year raises both pace and DNFs), and the finish times DNF runners would have run.
     """)
@@ -225,8 +225,9 @@ def _(mo):
     | `dnf_age_linear`, `dnf_age_quadratic` | $N(0, 0.5)$, $N(0, 0.25)$ | per decade from 40 |
     | `tau_dnf` $\tau_d$, `omega_dnf` $\omega_d$ | $\text{HalfNormal}(1)$ | spread of course and runner DNF tendencies (logit) |
     | `rho_course`, `rho_runner` | $2\,\text{Beta}(2, 2) - 1$ | correlation of DNF with pace effect (the LKJ(2) prior for a 2x2 correlation) |
+    | `dnf_runner_pace_quadratic` $q$ | $N(0, 0.5)$ | curvature of the DNF logit in the runner's standardized pace effect, $(v_r/\omega)^2 - 1$ |
 
-    Parameterization, chosen for sampling: each course's DNF level is a direct parameter (centered, given its pace effect), like the course means; runner effects are non-centered and sum to zero within gender, as in 1.2. `build_dnf_model(runner_dnf=...)` also builds the comparison models: runner DNF effects independent of pace (`'independent'`), or none (`'none'`).
+    Parameterization, chosen for sampling: each course's DNF level is a direct parameter (centered, given its pace effect), like the course means; runner effects are non-centered and sum to zero within gender, as in 1.2. `build_dnf_model(runner_dnf=...)` also builds the comparison models: a linear pace relation only (`'correlated'`), runner DNF effects independent of pace (`'independent'`), or none (`'none'`).
     """)
     return
 
@@ -263,8 +264,8 @@ def _(
         return raw - pm.math.dot(raw, _avg)[runner_gender]
 
 
-    def build_dnf_model(runner_dnf='correlated'):
-        """1.2's finish-time model plus the DNF part. runner_dnf: 'correlated', 'independent' or 'none'."""
+    def build_dnf_model(runner_dnf='quadratic'):
+        """1.2's finish-time model plus the DNF part. runner_dnf: 'quadratic' (full), 'correlated', 'independent' or 'none'."""
         with pm.Model(coords={'gender': list(ftm.GENDERS), 'course': courses, 'runner': runners}) as _model:
             # finish times (1.2)
             _pace = pm.Normal('pace_50k_mean', np.log(8.0), 0.3)
@@ -300,9 +301,13 @@ def _(
             if runner_dnf != 'none':
                 _omega_d = pm.HalfNormal('omega_dnf', 1.0)
                 _z2 = _zero_sum(pm.Normal('runner_dnf_raw', 0.0, 1.0, dims='runner'))
-                if runner_dnf == 'correlated':
+                if runner_dnf in ('correlated', 'quadratic'):
                     _rho_r = pm.Deterministic('rho_runner', 2 * pm.Beta('rho_runner_01', 2, 2) - 1)
                     _w = _omega_d * (_rho_r * _z1 + pt.sqrt(1 - _rho_r**2) * _z2)
+                    if runner_dnf == 'quadratic':
+                        # Curvature in the runner's standardized pace (centered so it does not shift
+                        # the DNF level): both the fastest and the slowest runners can drop more.
+                        _w = _w + pm.Normal('dnf_runner_pace_quadratic', 0.0, 0.5) * (_z1**2 - 1)
                 else:
                     _w = _omega_d * _z2
                 _eta = _eta + pm.Deterministic('runner_dnf_effect', _w, dims='runner')[s_runner]
@@ -311,7 +316,7 @@ def _(
 
 
     FINISH_SCALARS = ['pace_50k_mean', 'pace_50k_gap', 'distance_exponent_mean', 'distance_exponent_gap', 'tau', 'omega', 'sigma']
-    DNF_SCALARS = ['dnf_mean', 'dnf_distance', 'dnf_gender_gap', 'dnf_age_linear', 'dnf_age_quadratic', 'tau_dnf', 'omega_dnf', 'rho_course', 'rho_runner']
+    DNF_SCALARS = ['dnf_mean', 'dnf_distance', 'dnf_gender_gap', 'dnf_age_linear', 'dnf_age_quadratic', 'tau_dnf', 'omega_dnf', 'rho_course', 'rho_runner', 'dnf_runner_pace_quadratic']
 
 
     def flat_draws(posterior, name):
@@ -424,7 +429,7 @@ def _(
         return _trace
 
 
-    dnf_trace = fit_dnf(dnf_model, 'full', 13)
+    dnf_trace = fit_dnf(dnf_model, 'quadratic', 13)
     dnf_summary = az.summary(dnf_trace, var_names=FINISH_SCALARS + DNF_SCALARS, round_to=4)
     print(f"Divergences: {int(dnf_trace.sample_stats['diverging'].sum())}")
     _ess = az.ess(dnf_trace, var_names=['course_mean', 'course_dnf_level', 'runner_effect', 'runner_dnf_effect'])
@@ -551,7 +556,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **What the checks show.** Course DNF rates, age and gender, and how DNFs cluster within runners all fit. The relation between runner pace and DNF does not: observed DNF rates are U-shaped in runner pace (the fastest decile drops more often than the next few, the slowest more often still), while the model's single correlation gives a smooth, monotone rise. Fast runners likely drop when a race is not going their way, slow ones hit cutoffs. A curved relation (a quadratic in the runner's pace effect) is the obvious next step for this part.
+    **What the checks show.** Course DNF rates, age and gender, and how DNFs cluster within runners all fit. A linear relation between runner pace and DNF (the `correlated` model) missed a U-shape: the fastest runners drop more often than the next few deciles, and the slowest more than a straight line allows. The curvature term $q$ fixes both ends; the model still over-predicts DNFs by 1 to 3 points for runners just faster than average (deciles 2 to 5), so the true relation is flatter there than a quadratic. A spline in the pace effect would close that gap; it is small next to the effects themselves.
     """)
     return
 
@@ -561,9 +566,10 @@ def _(mo):
     mo.md(r"""
     ## Model comparison
 
-    PSIS-LOO on the DNF outcomes (leave one start out; the finish-time part is identical in all three), 500 draws per model:
+    PSIS-LOO on the DNF outcomes (leave one start out; the finish-time part is identical in all four), 500 draws per model:
 
-    - **correlated** (full): runner DNF tendency correlated with runner pace
+    - **quadratic** (full): runner DNF tendency correlated with runner pace, with curvature
+    - **correlated**: the same, linear in pace
     - **independent**: runner DNF tendency, unrelated to pace
     - **none**: no runner DNF tendency
     """)
@@ -573,7 +579,8 @@ def _(mo):
 @app.cell
 def _(build_dnf_model, dnf_trace, fit_dnf):
     dnf_comparison_traces = {
-        'correlated': dnf_trace,
+        'quadratic': dnf_trace,
+        'correlated': fit_dnf(build_dnf_model('correlated'), 'correlated', 13),
         'independent': fit_dnf(build_dnf_model('independent'), 'independent', 13),
         'none': fit_dnf(build_dnf_model('none'), 'none', 8),
     }
@@ -624,11 +631,11 @@ def _(
     pytensor,
     xr,
 ):
-    _idata = dnf_loo_data['correlated'].copy()
+    _idata = dnf_loo_data['quadratic'].copy()
     _scalars = FINISH_SCALARS + DNF_SCALARS
     _chosen = [v for v in ['pace_50k_mean', 'pace_50k_gap', 'distance_exponent_mean', 'distance_exponent_gap', 'age_linear', 'age_quadratic',
                            'tau', 'omega', 'sigma', 'dnf_mean', 'dnf_distance', 'dnf_gender_gap', 'dnf_age_linear', 'dnf_age_quadratic',
-                           'tau_dnf', 'omega_dnf', 'rho_course_01', 'rho_runner_01'] ]
+                           'tau_dnf', 'omega_dnf', 'rho_course_01', 'rho_runner_01', 'dnf_runner_pace_quadratic']]
     # Log density of each chosen prior at the posterior draws. pm.compute_log_prior needs every
     # free variable, and the stored trace drops the raw runner effects; these priors all have
     # fixed parameters, so each is evaluated on its own.
@@ -658,7 +665,7 @@ def _(mo):
     mo.md(r"""
     ## Results
 
-    **Left**: each course's DNF effect (logit, after distance) against its pace effect, with 94% intervals; the correlation $\rho_c$ is in the title. **Middle**: DNF probability against a runner's pace effect, for a 40-year-old at an average 50 km and 100 mile course, through the runner-level correlation (94% band). **Right**: DNF probability by distance and age for an average runner and course.
+    **Left**: each course's DNF effect (logit, after distance) against its pace effect, with 94% intervals; the correlation $\rho_c$ is in the title. **Middle**: DNF probability against a runner's pace effect, for a 40-year-old at an average 50 km and 100 mile course, through the runner-level correlation and curvature (94% band). **Right**: DNF probability by distance and age for an average runner and course.
     """)
     return
 
@@ -683,14 +690,16 @@ def _(course_label, dnf_trace, expit, flat_draws, ftm, np, plt):
                  title=f'Courses: rho = {np.median(_rc):.2f} (94% {np.percentile(_rc, 3):.2f} to {np.percentile(_rc, 97):.2f})')
 
     _om, _omd = flat_draws(_p, 'omega'), flat_draws(_p, 'omega_dnf')
+    _q = flat_draws(_p, 'dnf_runner_pace_quadratic')
     _v = np.linspace(-2, 2, 41)
     for _km, _color in [(50, '#2A9D8F'), (160.9, '#E76F51')]:
         _base = flat_draws(_p, 'dnf_mean') + flat_draws(_p, 'dnf_distance') * np.log(_km / ftm.REFERENCE_KM)
-        _prob = expit(_base[:, None] + (_rr * _omd)[:, None] * _v[None, :])  # E[w | v] = rho * omega_d * v / omega, v in units of omega
+        # E[DNF logit | v] = rho * omega_d * v + q * (v^2 - 1), v in SDs of runner ability
+        _prob = expit(_base[:, None] + (_rr * _omd)[:, None] * _v[None, :] + _q[:, None] * (_v[None, :] ** 2 - 1))
         _axes[1].fill_between(_v, *np.percentile(_prob, [3, 97], axis=0), color=_color, alpha=0.3)
         _axes[1].plot(_v, np.median(_prob, axis=0), color=_color, label=f'{_km:g} km')
     _axes[1].set(xlabel='Runner pace effect (SDs of runner ability; positive = slower)', ylabel='P(DNF)',
-                 title=f'Runners: rho = {np.median(_rr):.2f} (94% {np.percentile(_rr, 3):.2f} to {np.percentile(_rr, 97):.2f})', ylim=(0, None))
+                 title=f'Runners: rho = {np.median(_rr):.2f}, curvature q = {np.median(_q):.2f} (94% {np.percentile(_q, 3):.2f} to {np.percentile(_q, 97):.2f})', ylim=(0, None))
     _axes[1].legend()
 
     _km = np.geomspace(42.2, 160.9, 40)
@@ -717,7 +726,7 @@ def _(mo):
     mo.md(r"""
     ## Handoff
 
-    Saved to `data/cache/2.2_dnf_observed/`: course effects (`course_effects.parquet`: pace and DNF effects, posterior mean and SD) and runner effects (`runner_effects.parquet`: pace and DNF effects, with each runner's finishes and reporting starts). 2.3 extends this model to editions that do not report DNFs.
+    Saved to `data/cache/2.2_dnf_observed/`: course effects (`course_effects.parquet`: pace and DNF effects, posterior mean and SD) and runner effects (`runner_effects.parquet`: pace and DNF effects, the DNF effect including the pace curvature, with each runner's finishes and reporting starts). 2.3 extends this model to editions that do not report DNFs.
     """)
     return
 

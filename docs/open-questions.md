@@ -86,10 +86,11 @@ dropped and runner histories deferred with no plan):
   distance ratio (plus a quadratic in nb 4). Align the functional forms.
 - **Selection bias vs course difficulty** [UltraSignup-i6e]: answered in 2.2. With runner
   effects, the course-level pace-DNF correlation is about zero (-0.05, 94% -0.39 to 0.30); the
-  runner-level one is 0.33 (slower runners drop more).
-- **Curved runner pace-DNF relation** (2.2's posterior predictive check): observed DNF rates
-  are U-shaped in runner pace (fast runners also drop more than the linear correlation allows).
-  Add a quadratic in the runner pace effect to the DNF logit.
+  runner-level one is 0.47 with a curvature term (slower runners drop more, and the very fastest
+  somewhat more than average).
+- **Runner pace-DNF shape** (2.2): a quadratic in the runner pace effect fixed the U-shape's
+  ends (LOO +119, SE 18, over linear), but DNFs are still over-predicted by 1 to 3 points for
+  runners just faster than average. A spline in the pace effect would close it.
 
 ## 2.3 dnf_unobserved
 
