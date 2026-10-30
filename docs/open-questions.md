@@ -84,10 +84,10 @@ dropped and runner histories deferred with no plan):
 
 - **Distance enters the logit linearly in km** [UltraSignup-rl7], while nb 3/4 use a log
   distance ratio (plus a quadratic in nb 4). Align the functional forms.
-- **Selection bias vs course difficulty** [UltraSignup-i6e]: answered in 2.2. With runner
-  effects, the course-level pace-DNF correlation is about zero (-0.05, 94% -0.39 to 0.30); the
-  runner-level one is 0.47 with a curvature term (slower runners drop more, and the very fastest
-  somewhat more than average).
+- **Selection bias vs course difficulty** [UltraSignup-i6e]: answered in 2.2. On the dev core
+  (28 courses) the course-level pace-DNF correlation was about zero (-0.05, 94% -0.39 to 0.30);
+  on the (3, 500) core (172 courses) it is 0.27 (0.14 to 0.41): harder courses do drop more
+  runners, after runner effects, but much less than the runner-level relation (0.58).
 - **Runner pace-DNF shape** (2.2): a quadratic in the runner pace effect fixed the U-shape's
   ends (LOO +119, SE 18, over linear), but DNFs are still over-predicted by 1 to 3 points for
   runners just faster than average. A spline in the pace effect would close it.
