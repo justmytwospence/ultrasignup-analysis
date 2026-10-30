@@ -52,6 +52,7 @@ notebooks do not have yet (see Open questions below).
 - How does pace change with age, and where is the peak? (1.1)
 
 ### Prediction
+- Who will win a race? For every registered runner, what are the odds of winning, of a podium or top 10, and of finishing at all? (simulate the whole field from the joint finish and DNF posterior; planned: needs entrant rosters and an edition effect for the day's conditions)
 - What finish time, with an interval, should a given runner expect at a given course? (posterior predictive)
 - What is the chance they finish at all, and at what pace is that chance best? (2.2, 2.3)
 
