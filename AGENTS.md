@@ -1,8 +1,8 @@
 # UltraSignup analysis: agent guide
 
-Bayesian models (PyMC, marimo notebooks) of ultramarathon finish times and DNF rates over
-UltraSignup results. This repo only analyzes: the data lives in a DuckDB database of every
-UltraSignup result, served read-only over DuckDB's Quack protocol (on the NUC).
+What the project is, its questions, setup, data access and the notebook list are in
+`README.md`; this file holds only what an agent needs beyond that (internals, conventions,
+workflow rules). Keep the two from repeating each other.
 
 ## Data
 
@@ -28,20 +28,14 @@ UltraSignup result, served read-only over DuckDB's Quack protocol (on the NUC).
 - DuckDB is pinned to 2.0 (the data source's version, required by Quack).
 - `data/` is gitignored: `results.duckdb`, and `cache/` (k-core subsets and traces).
 
-## Setup and tests
+## Tests
 
-```sh
-uv sync
-cp .env.example .env    # then fill in the token
-uv run pytest           # synthetic database + a real Quack round trip; offline-safe
-uv run pytest -m live   # contract check against the real data source
-```
+`uv run pytest` runs on a synthetic database plus a real Quack round trip and is
+offline-safe; `uv run pytest -m live` checks the contract against the real data source.
 
 ## Notebooks
 
-Notebooks are named `<track>.<step>_<topic>.py`: track 0 data preparation (`0.1_kcore`),
-track 1 finish times (`1.1_finish_courses`, `1.2_finish_runners`), track 2 DNFs
-(`2.1_dnf_reporting`, `2.2_dnf_observed`, `2.3_dnf_unobserved`).
+Names follow the README (`<track>.<step>_<topic>.py`).
 Each step adds one thing to the earlier steps of its track; a new model gets the next step
 number (`1.3_...`), and steps past 9 are fine (`1.10`). Each notebook keeps its traces and
 writes its output for later ones in `data/cache/<notebook stem>/`: `0.1_kcore/core.parquet`
@@ -86,7 +80,7 @@ a model version and a data hash.
   chosen in 0.1; check `n_courses` after subsetting, and loosen for final fits. The full (α, β) sweep takes about a minute; its cache key includes a data
   fingerprint.
 
-Open modeling problems and planned work: the README's Open questions section.
+Open modeling problems and planned work live in the README's Open questions section; update it when you find or close one.
 
 ## Conventions
 

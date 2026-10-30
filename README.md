@@ -64,7 +64,14 @@ cp .env.example .env    # set ULTRASIGNUP_QUACK_URI and ULTRASIGNUP_QUACK_TOKEN
 uv run pytest
 ```
 
-## Data access
+## Data
+
+Results come from a DuckDB database of UltraSignup races, courses, runners and results, read
+over the network or from a local copy. Starts are finishes or DNFs (no-shows and
+disqualifications are dropped). About a third of editions hide their results, so they are
+absent; courses are identified across years and renames, so a course effect pools every
+edition of a race.
+
 
 ```python
 from utils import data_source
@@ -91,7 +98,8 @@ con = data_source.connect(local=True)          # offline, or to pin a long fit t
 | `2.3_dnf_unobserved.py` | Adds editions that post no DNFs, via 2.1's reporting model, and predicts their hidden DNFs |
 
 Names are `<track>.<step>_<topic>`: track 0 prepares data, 1 models finish times, 2 models
-DNFs; a step builds on the earlier steps of its track.
+DNFs; a step builds on the earlier steps of its track, and a new model takes the next step
+number.
 
 ```sh
 uv run marimo edit notebooks/0.1_kcore.py
