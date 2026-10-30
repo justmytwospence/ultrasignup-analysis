@@ -9,23 +9,23 @@ MODEL_FRAME_COLUMNS = {
 }
 
 
-def test_load_results_sources(mirror_con):
-    default = load_results(mirror_con)
+def test_load_results_sources(db_con):
+    default = load_results(db_con)
     assert set(default["source"]) == {"results_api"}
-    with_hidden = load_results(mirror_con, sources=("results_api", "participant_history"))
+    with_hidden = load_results(db_con, sources=("results_api", "participant_history"))
     assert len(with_hidden) == len(default) + 1
 
 
-def test_model_frame_contract(mirror_con):
-    frame = process_results(load_results(mirror_con))
+def test_model_frame_contract(db_con):
+    frame = process_results(load_results(db_con))
     assert MODEL_FRAME_COLUMNS <= set(frame.columns)
     assert (frame["name"] == frame["course_id"]).all()
     assert frame["age"].dtype.kind == "i"
     assert frame["participant_id"].map(type).eq(str).all()
 
 
-def test_status_mapping_and_filters(mirror_con):
-    frame = process_results(load_results(mirror_con))
+def test_status_mapping_and_filters(db_con):
+    frame = process_results(load_results(db_con))
     race1 = frame[frame["event_distance_id"] == 1].set_index("participant_id")
     # finished, finished_small_field and unofficial finish; dnf stays as a DNF
     assert race1.loc[["10", "11", "12"], "finished"].all()
@@ -37,16 +37,16 @@ def test_status_mapping_and_filters(mirror_con):
     assert set(frame["event_distance_id"]) == {1, 2}
 
 
-def test_units(mirror_con):
-    frame = process_results(load_results(mirror_con)).set_index(["event_distance_id", "participant_id"])
+def test_units(db_con):
+    frame = process_results(load_results(db_con)).set_index(["event_distance_id", "participant_id"])
     row = frame.loc[(1, "10")]
     assert row["time_ms"] == 5 * 3600 * 1000
     assert abs(row["distance_miles"] - 50 / 1.609344) < 1e-9
     assert abs(row["pace_min_mi"] - 300 / (50 / 1.609344)) < 1e-9
 
 
-def test_filter_races_with_dnfs(mirror_con):
-    frame = process_results(load_results(mirror_con))
+def test_filter_races_with_dnfs(db_con):
+    frame = process_results(load_results(db_con))
     kept = filter_races_with_dnfs(frame)
     assert set(kept["name"]) == {"100-50k"}
 

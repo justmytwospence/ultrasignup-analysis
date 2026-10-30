@@ -296,7 +296,7 @@ def _(results, subset_kcore_data):
     kcore_subset = subset_kcore_data(results, alpha=alpha, beta=beta)
     kcore_data = kcore_subset[kcore_subset['in_kcore']].copy()
 
-    # A course is `name` (the mirror's course_id) across all its editions; label it by its latest race name without the year
+    # A course is `name` (the data source's course_id) across all its editions; label it by its latest race name without the year
     course_labels = (
         kcore_data.sort_values('race_date').groupby('name')['race_name'].last()
         .str.replace(r' \d{4} - ', ' - ', regex=True).to_dict()

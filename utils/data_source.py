@@ -1,18 +1,18 @@
-"""Access to the UltraSignup mirror (https://github.com/justmytwospence/ultrasignup-mirror).
+"""Access to the UltraSignup results database.
 
-The mirror runs on the NUC and serves its analyst schema (`main`: races, results, runners,
-courses, events, relay_results, about; more as the mirror adds them) read-only over DuckDB's Quack protocol. Two ways in:
+The database runs on the NUC and serves its analyst schema (`main`: races, results, runners,
+courses, events, relay_results, about; more as the data source adds them) read-only over DuckDB's Quack protocol. Two ways in:
 
     con = connect()             # live: queries execute on the NUC, results stream back
-    con = connect(local=True)   # the local copy in data/mirror.duckdb, made by pull()
+    con = connect(local=True)   # the local copy in data/results.duckdb, made by pull()
 
-`pull()` copies the analyst tables into data/mirror.duckdb, for offline work, for long MCMC
+`pull()` copies the analyst tables into data/results.duckdb, for offline work, for long MCMC
 runs that should not see the data move underneath them, for RunPod (which cannot reach the
 NUC), and for the duckdb MCP server in .mcp.json.
 
 Configuration comes from the environment (or a gitignored .env at the repo root):
     ULTRASIGNUP_QUACK_URI    e.g. quack:ultrasignup.example.com:443
-    ULTRASIGNUP_QUACK_TOKEN  the mirror's read-only Quack token
+    ULTRASIGNUP_QUACK_TOKEN  the data source's read-only Quack token
     ULTRASIGNUP_SOURCE       live (default) or local: what connect() opens when `local` is
                              not given. Set local to pin notebooks and their caches (keyed
                              by parameters, not data) to one pull.
@@ -26,21 +26,21 @@ from pathlib import Path
 import duckdb
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-LOCAL_PATH = REPO_ROOT / "data" / "mirror.duckdb"
+LOCAL_PATH = REPO_ROOT / "data" / "results.duckdb"
 
-# Major version of the mirror's `main` schema this code understands. The mirror bumps the
+# Major version of the data source's `main` schema this code understands. The data source bumps the
 # major on breaking changes to `main` and records it in main.about.schema_version.
 EXPECTED_SCHEMA_MAJOR = 1
 
-# The tables this repo relies on; pull() copies every table in the mirror's `main`, so tables
-# the mirror adds later (entrants, histories) come along without a code change.
+# The tables this repo relies on; pull() copies every table in the data source's `main`, so tables
+# the data source adds later (entrants, histories) come along without a code change.
 TABLES = ("about", "courses", "events", "races", "results", "relay_results", "runners")
 
 # Storage format of the local copy: readable by DuckDB 1.5+ (the duckdb MCP, older images).
 LOCAL_STORAGE_VERSION = "v1.5.0"
 
 
-class MirrorConfigError(RuntimeError):
+class DataSourceConfigError(RuntimeError):
     pass
 
 
@@ -61,16 +61,16 @@ def _settings() -> tuple[str, str]:
     uri = os.environ.get("ULTRASIGNUP_QUACK_URI", "").strip()
     token = os.environ.get("ULTRASIGNUP_QUACK_TOKEN", "").strip()
     if not uri or not token:
-        raise MirrorConfigError(
+        raise DataSourceConfigError(
             "Set ULTRASIGNUP_QUACK_URI and ULTRASIGNUP_QUACK_TOKEN (see .env.example), "
             "or use connect(local=True) after a pull()."
         )
     return uri, token
 
 
-def _attach_remote(con: duckdb.DuckDBPyConnection, alias: str = "mirror") -> None:
+def _attach_remote(con: duckdb.DuckDBPyConnection, alias: str = "remote") -> None:
     uri, token = _settings()
-    con.execute(f"CREATE OR REPLACE TEMPORARY SECRET ultrasignup_mirror (TYPE quack, TOKEN {_quote(token)}, SCOPE {_quote(uri)})")
+    con.execute(f"CREATE OR REPLACE TEMPORARY SECRET ultrasignup_source (TYPE quack, TOKEN {_quote(token)}, SCOPE {_quote(uri)})")
     con.execute(f"ATTACH {_quote(uri)} AS {alias} (TYPE quack)")
 
 
@@ -79,7 +79,7 @@ def _quote(value: str) -> str:
 
 
 def check_schema(con: duckdb.DuckDBPyConnection, catalog: str | None = None) -> str:
-    """Return the mirror's schema version; raise SchemaMismatch if its major is not the expected one."""
+    """Return the data source's schema version; raise SchemaMismatch if its major is not the expected one."""
     table = f"{catalog}.main.about" if catalog else "main.about"
     try:
         version = con.execute(f"SELECT schema_version FROM {table} LIMIT 1").fetchone()
@@ -90,7 +90,7 @@ def check_schema(con: duckdb.DuckDBPyConnection, catalog: str | None = None) -> 
     text = str(version[0])
     major = int(text.split(".")[0])
     if major != EXPECTED_SCHEMA_MAJOR:
-        raise SchemaMismatch(f"Mirror schema {text} is not compatible with this code (expects major {EXPECTED_SCHEMA_MAJOR}). Update utils/ to the new schema.")
+        raise SchemaMismatch(f"Data source schema {text} is not compatible with this code (expects major {EXPECTED_SCHEMA_MAJOR}). Update utils/ to the new schema.")
     return text
 
 
@@ -98,40 +98,40 @@ def _default_local() -> bool:
     _load_env()
     source = os.environ.get("ULTRASIGNUP_SOURCE", "live").strip().lower() or "live"
     if source not in ("live", "local"):
-        raise MirrorConfigError(f"ULTRASIGNUP_SOURCE must be live or local, not {source!r}")
+        raise DataSourceConfigError(f"ULTRASIGNUP_SOURCE must be live or local, not {source!r}")
     return source == "local"
 
 
 def connect(*, local: bool | None = None, path: Path | str | None = None) -> duckdb.DuckDBPyConnection:
-    """Open the mirror's analyst schema.
+    """Open the data source's analyst schema.
 
     local=None (default) follows ULTRASIGNUP_SOURCE (live unless set to local).
-    live: attach the mirror over Quack and CONNECT to it, so plain SQL such as
+    live: attach the data source over Quack and CONNECT to it, so plain SQL such as
     `SELECT * FROM results` runs on the NUC.
-    local=True: open the pulled copy (data/mirror.duckdb, or `path`) read-only.
+    local=True: open the pulled copy (data/results.duckdb, or `path`) read-only.
     """
     if local is None:
         local = _default_local()
     if local:
         target = Path(path) if path else LOCAL_PATH
         if not target.exists():
-            raise FileNotFoundError(f"{target} does not exist; run utils.mirror.pull() first.")
+            raise FileNotFoundError(f"{target} does not exist; run utils.data_source.pull() first.")
         con = duckdb.connect(str(target), read_only=True)
         check_schema(con)
         return con
     con = duckdb.connect()
     _attach_remote(con)
-    check_schema(con, "mirror")
-    con.execute("CONNECT mirror")
+    check_schema(con, "remote")
+    con.execute("CONNECT remote")
     return con
 
 
-def pull(tables: tuple[str, ...] | None = None, *, dest: Path | str | None = None, source: duckdb.DuckDBPyConnection | None = None, source_catalog: str = "mirror") -> Path:
-    """Copy the analyst tables (default: every table in the mirror's `main`) into a local
+def pull(tables: tuple[str, ...] | None = None, *, dest: Path | str | None = None, source: duckdb.DuckDBPyConnection | None = None, source_catalog: str = "remote") -> Path:
+    """Copy the analyst tables (default: every table in the data source's `main`) into a local
     DuckDB file and return its path.
 
     The copy is written to a temporary file and moved into place, so a reader never sees a
-    half-written file. `source` is for tests: a connection that already has the mirror
+    half-written file. `source` is for tests: a connection that already has the data source
     attached as `source_catalog`.
     """
     target = Path(dest) if dest else LOCAL_PATH
@@ -152,7 +152,7 @@ def pull(tables: tuple[str, ...] | None = None, *, dest: Path | str | None = Non
             ).fetchall())
             missing = set(TABLES) - set(tables)
             if missing:
-                raise SchemaMismatch(f"Mirror is missing tables {sorted(missing)}")
+                raise SchemaMismatch(f"Data source is missing tables {sorted(missing)}")
         con.execute(f"ATTACH {_quote(str(tmp))} AS pulled (STORAGE_VERSION '{LOCAL_STORAGE_VERSION}')")
         try:
             for table in tables:

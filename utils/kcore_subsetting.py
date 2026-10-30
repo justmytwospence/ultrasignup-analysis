@@ -7,7 +7,7 @@ runner has started at least α of its courses and every course has at least β o
 Edges count starts, not finishes: a finishes-only graph keeps runners who rarely DNF and
 drops those who often do, which biases every DNF model fit on the core.
 
-Courses are keyed by (name, distance_miles); with the mirror, name is the course_id, so that
+Courses are keyed by (name, distance_miles); with this data, name is the course_id, so that
 is one key per course across all its editions.
 
 Usage:

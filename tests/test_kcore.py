@@ -5,10 +5,10 @@ from utils.data_processing import load_results, process_results
 from utils.kcore_subsetting import evaluate_all_kcore_candidates, subset_kcore_data
 
 
-def test_kcore_on_model_frame(mirror_con):
+def test_kcore_on_model_frame(db_con):
     """The k-core groups courses by (name, distance_miles); with name = course_id that is
     one group per course, and runners 10 and 11 finished both courses."""
-    frame = process_results(load_results(mirror_con))
+    frame = process_results(load_results(db_con))
     flagged = subset_kcore_data(frame, alpha=2, beta=2)
     core = flagged[flagged["in_kcore"]]
     assert set(core["participant_id"]) == {"10", "11"}

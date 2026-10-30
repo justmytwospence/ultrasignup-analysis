@@ -1,4 +1,4 @@
-"""The live path over a real Quack server (a subprocess serving the synthetic mirror).
+"""The live path over a real Quack server (a subprocess serving the synthetic database).
 
 Catches what a local file cannot: e.g. bound parameters do not travel through CONNECT.
 Skipped when the quack extension cannot be installed (offline).
@@ -13,7 +13,7 @@ import time
 import duckdb
 import pytest
 
-from utils import mirror
+from utils import data_source
 from utils.data_processing import load_results, process_results
 
 TOKEN = "test_token_0123456789abcdef0123"
@@ -31,13 +31,13 @@ pytestmark = pytest.mark.skipif(not _quack_available(), reason="quack extension 
 
 
 @pytest.fixture
-def quack_server(mirror_file):
+def quack_server(db_file):
     with socket.socket() as s:
         s.bind(("localhost", 0))
         port = s.getsockname()[1]
     script = textwrap.dedent(f"""
         import duckdb, time
-        con = duckdb.connect({str(mirror_file)!r})
+        con = duckdb.connect({str(db_file)!r})
         con.execute("CALL quack_serve('quack:localhost:{port}', token = '{TOKEN}')")
         print("SERVING", flush=True)
         time.sleep(120)
@@ -57,16 +57,16 @@ def quack_server(mirror_file):
 
 
 def test_live_connect_load_and_pull(quack_server, monkeypatch, tmp_path):
-    monkeypatch.setattr(mirror, "_load_env", lambda: None)
+    monkeypatch.setattr(data_source, "_load_env", lambda: None)
     monkeypatch.setenv("ULTRASIGNUP_QUACK_URI", quack_server)
     monkeypatch.setenv("ULTRASIGNUP_QUACK_TOKEN", TOKEN)
 
-    con = mirror.connect()
+    con = data_source.connect()
     frame = process_results(load_results(con))
     con.close()
     assert set(frame["event_distance_id"]) == {1, 2}
 
-    pulled = mirror.pull(dest=tmp_path / "pulled.duckdb")
-    local = mirror.connect(local=True, path=pulled)
+    pulled = data_source.pull(dest=tmp_path / "pulled.duckdb")
+    local = data_source.connect(local=True, path=pulled)
     assert local.execute("SELECT count(*) FROM results").fetchone()[0] == 22
     local.close()

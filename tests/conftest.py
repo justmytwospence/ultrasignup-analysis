@@ -1,7 +1,7 @@
-"""A tiny stand-in for the mirror's analyst schema (`main`), built as a local DuckDB file.
+"""A tiny stand-in for the analyst schema (`main`), built as a local DuckDB file.
 
 Only the columns this repo reads are modeled; the real schema is documented in the
-mirror's docs/schema.md.
+data source's docs/schema.md.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ RESULTS = [
 ]
 
 
-def build_mirror(path: Path, schema_version: str = "1.0") -> Path:
+def build_db(path: Path, schema_version: str = "1.0") -> Path:
     con = duckdb.connect(str(path))
     con.execute(SCHEMA)
     con.execute("INSERT INTO about VALUES (?, now())", [schema_version])
@@ -78,12 +78,12 @@ def build_mirror(path: Path, schema_version: str = "1.0") -> Path:
 
 
 @pytest.fixture
-def mirror_file(tmp_path: Path) -> Path:
-    return build_mirror(tmp_path / "mirror.duckdb")
+def db_file(tmp_path: Path) -> Path:
+    return build_db(tmp_path / "results.duckdb")
 
 
 @pytest.fixture
-def mirror_con(mirror_file: Path):
-    con = duckdb.connect(str(mirror_file), read_only=True)
+def db_con(db_file: Path):
+    con = duckdb.connect(str(db_file), read_only=True)
     yield con
     con.close()

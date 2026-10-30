@@ -1,6 +1,6 @@
 # Base image for PyMC GPU analysis - CUDA 12.4 (compatible with RunPod driver 565)
-# RunPod cannot reach the mirror over Quack: upload a utils.mirror.pull() copy
-# (data/mirror.duckdb) and use utils.mirror.connect(local=True).
+# RunPod cannot reach the data source over Quack: upload a utils.data_source.pull() copy
+# (data/results.duckdb) and use utils.data_source.connect(local=True).
 # Build: docker buildx build --platform linux/amd64 -t justmytwospence/pymc-base:v4 --push .
 
 FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04

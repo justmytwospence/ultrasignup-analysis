@@ -1,7 +1,7 @@
 [project]
 name = "ultrasignup-analysis"
 version = "0.1.0"
-description = "Bayesian models of ultramarathon finish times and DNFs, over the UltraSignup mirror"
+description = "Bayesian models of ultramarathon finish times and DNFs, over UltraSignup results"
 requires-python = ">=3.11"
 license = "PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE.md"]
@@ -47,7 +47,7 @@ packages = ["utils"]
 
 [tool.uv]
 # Release cooldown: resolve only releases at least a week old. duckdb 2.0.0 (2026-10-21) is
-# taken early on purpose: the mirror writes DuckDB 2.0 storage and Quack needs the same
+# taken early on purpose: the data source writes DuckDB 2.0 storage and Quack needs the same
 # version on both ends. Remove the entry once it is past the cooldown.
 exclude-newer = "7 days"
 
@@ -56,7 +56,7 @@ duckdb = "2026-10-21T13:00:00Z"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["live: needs the real mirror (ULTRASIGNUP_QUACK_URI and ULTRASIGNUP_QUACK_TOKEN)"]
+markers = ["live: needs the real data source (ULTRASIGNUP_QUACK_URI and ULTRASIGNUP_QUACK_TOKEN)"]
 addopts = "-m 'not live'"
 
 [tool.marimo.runtime]

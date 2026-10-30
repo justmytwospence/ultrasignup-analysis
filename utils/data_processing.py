@@ -1,17 +1,17 @@
 """
 Data loading and the model frame for the UltraSignup Bayesian notebooks.
 
-Data comes from the mirror's analyst schema (see utils/mirror.py): `main.results` carries
+Data comes from the data source's analyst schema (see utils/data_source.py): `main.results` carries
 one row per runner per race with the race context (course, date, distance, format) already
 joined in, statuses as strings, times in seconds and NULL for unknowns.
 
-`load_results()` returns those rows with the mirror's column names. `process_results()`
+`load_results()` returns those rows with the data source's column names. `process_results()`
 turns them into the model frame every notebook consumes. Its column contract is:
 
-    event_distance_id   race id (mirror `did`)
-    participant_id      canonical runner id (mirror `runner_id`), as a string like the
+    event_distance_id   race id (source `did`)
+    participant_id      canonical runner id (source `runner_id`), as a string like the
                         old scraper's VARCHAR column, which the k-core code relies on
-    name                course identity (mirror `course_id`, stable across years)
+    name                course identity (source `course_id`, stable across years)
     distance_miles      course distance
     time_ms             finish time in milliseconds (NaN for DNFs)
     finished            True for finishers, False for DNFs
@@ -29,7 +29,7 @@ import re
 import duckdb
 import pandas as pd
 
-from utils import mirror
+from utils import data_source
 
 KM_PER_MILE = 1.609344
 
@@ -37,14 +37,14 @@ KM_PER_MILE = 1.609344
 FINISHED_STATUSES = ("finished", "finished_small_field", "unofficial")
 DNF_STATUSES = ("dnf",)
 
-# Plausibility bounds for the model frame (the mirror does not clean posted values).
+# Plausibility bounds for the model frame (the data source does not clean posted values).
 MIN_AGE, MAX_AGE = 10, 95
 # min/mile: faster than a 5:00 mile is a timing error; slower than 60 min/mile (100 miles
 # in 100 hours) is a mistyped time, e.g. the 470 posted finishes over 14 days.
 MIN_PACE, MAX_PACE = 5, 60
 
-# The mirror serves only the public results: hidden results (about a third of editions,
-# shown only on runner pages) are not mirrored, and the 2025 scrape is not imported.
+# The data source serves only the public results: hidden results (about a third of editions,
+# shown only on runner pages) are not included, and the 2025 scrape is not imported.
 DEFAULT_SOURCES = ("results_api",)
 
 RESULT_COLUMNS = (
@@ -68,20 +68,20 @@ RESULT_COLUMNS = (
 
 def load_results(con: duckdb.DuckDBPyConnection | None = None, sources: Sequence[str] = DEFAULT_SOURCES) -> pd.DataFrame:
     """
-    Load results from the mirror's `main.results`, plus the `virtual`, `cancelled` and
+    Load results from the data source's `main.results`, plus the `virtual`, `cancelled` and
     `reports_dnfs` flags of their races (fetched separately and merged here: Quack cannot stream two remote
     tables in one query).
 
     Parameters
     ----------
     con : DuckDB connection, optional
-        A connection from utils.mirror.connect(). Defaults to a live connection.
+        A connection from utils.data_source.connect(). Defaults to a live connection.
     sources : sequence of str
-        Which result sources to include. The mirror only has "results_api" today; the
+        Which result sources to include. The data source only has "results_api" today; the
         parameter stays so a later source can be opted into.
     """
     own = con is None
-    con = con or mirror.connect()
+    con = con or data_source.connect()
     try:
         # Literals, not bound parameters: parameters do not travel through CONNECT to the
         # remote (DuckDB 2.0.0 raises "Values were not provided").
@@ -134,10 +134,10 @@ def process_results(results: pd.DataFrame) -> pd.DataFrame:
     3. Keep starts that ended in a finish or a DNF (dns and dq are dropped).
     4. Compute pace and drop finishers outside MIN_PACE to MAX_PACE min/mile (data errors).
 
-    The mirror posts values as UltraSignup has them, never corrected (ages under 5 or
+    The data source posts values as UltraSignup has them, never corrected (ages under 5 or
     negative, finish times over 14 days), so these filters are the cleaning step.
     """
-    # course_id is NULL until the mirror has fetched the race's series (a handful of new
+    # course_id is NULL until the data source has fetched the race's series (a handful of new
     # editions); such races have no course identity to pool on yet, so they are dropped.
     results = results[
         results['gender'].isin(['M', 'F'])
@@ -173,7 +173,7 @@ def process_results(results: pd.DataFrame) -> pd.DataFrame:
 
 def filter_races_with_dnfs(results: pd.DataFrame) -> pd.DataFrame:
     """
-    Keep only race editions that report their DNFs (the mirror's races.reports_dnfs: the
+    Keep only race editions that report their DNFs (the data source's races.reports_dnfs: the
     results page lists DNF or DNS rows).
 
     An edition that posts only finishers shows zero DNFs whether or not anyone dropped, so

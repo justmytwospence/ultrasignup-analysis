@@ -18,7 +18,7 @@ def _(mo):
 
     Many race editions post only their finishers. For those, zero DNF rows does not mean zero DNFs, and every DNF model downstream has to know which editions it can trust.
 
-    The mirror settles most of this directly. Each edition falls into one of three kinds:
+    The data source settles most of this directly. Each edition falls into one of three kinds:
 
     - **reports**: it posts DNF rows, so its DNF count is known
     - **reports, zero DNFs**: it posts DNS rows but no DNFs, so it lists non-finishers and the zero is real
@@ -56,7 +56,7 @@ def _():
     import matplotlib.pyplot as plt
     from scipy.special import betaln, expit, gammaln, log_expit
 
-    from utils import mirror
+    from utils import data_source
     from utils.data_processing import is_running_race
 
     return (
@@ -69,7 +69,7 @@ def _():
         hashlib,
         is_running_race,
         log_expit,
-        mirror,
+        data_source,
         np,
         pd,
         plt,
@@ -81,10 +81,10 @@ def _():
 
 
 @app.cell
-def _(is_running_race, mirror, np):
+def _(is_running_race, data_source, np):
     # One row per edition (a distance at a dated event) from main.races: public results,
     # distance format, marathon to 100 miles, running races, not virtual or cancelled.
-    with mirror.connect() as _con:
+    with data_source.connect() as _con:
         editions = _con.execute("""
             SELECT did, course_id, series_id, series_name, race_name, year, distance_km,
                    n_starters, n_finishers, coalesce(n_dnf, 0) AS n_dnf, coalesce(n_dns, 0) AS n_dns,
