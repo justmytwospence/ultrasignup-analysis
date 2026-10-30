@@ -47,6 +47,18 @@ notebooks do not have yet (see Open questions below).
 - How many DNFs are hidden in races that post only finishers, and does leaving them out bias what we learn about course difficulty? (2.3)
 - What share of a course's drops come from being a hard course, and what share from who showed up? (course vs runner DNF effects, 2.2)
 
+### Causal questions
+The data is observational, so these are answered by comparing a runner with themselves or a
+course with its own norm, and each rests on a stated assumption. All are planned.
+- Does experience make runners faster and less likely to drop, or do only the durable ones keep racing? (compare a runner's 1st, 2nd and 3rd race using `runner_nth_race`; assumes who stops entering is modeled, since quitters vanish)
+- What does stepping up in distance do to the risk of dropping, for example a first 100-miler after 50-milers? (a runner's own record as the baseline; assumes the runner effect captures who they are)
+- How much does one DNF change a runner's next race, in finish chance and pace? (before-and-after within a runner; unseen injury hits both races, so read it as an association)
+- How much of the pace decline with age is aging, and how much is which cohort of runners shows up? (within-runner age changes against the pooled age curve)
+- Is a course's effect the course, or the runners who chose it? (runners who ran several courses give same-runner comparisons; assumes runners do not pick courses by private suitability such as hill specialists choosing hilly races, which the runner-by-gain slope would test)
+- How much do heat, snow or rain change pace and DNFs? (a race year against that course's own norm, a difference-in-differences; needs weather joined from an outside source)
+
+Out of reach: training, shoes, nutrition, coaching and anything else not observed.
+
 ### Population
 - How does pace scale with distance, and does that differ by gender? (1.1)
 - How does pace change with age, and where is the peak? (1.1)
