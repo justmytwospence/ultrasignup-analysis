@@ -93,7 +93,7 @@ def sample_lean(model: pm.Model, var_names: list[str], *, draws: int, tune: int 
         trace = pm.sample(draws=draws, tune=tune, chains=chains, nuts_sampler="nutpie", var_names=var_names,
                           nuts_sampler_kwargs=nuts_kwargs, **kwargs)
     got = trace.posterior.sizes["draw"]
-    if got != draws:
+    if got != draws or not _complete(trace):
         # nutpie returns what it has when sampling is interrupted; never let that be cached
         raise RuntimeError(f"Sampling returned {got} of {draws} draws per chain (interrupted?); not using this trace.")
     return drop_parameter_stats(trace) if store_dir is not None else trace
@@ -117,6 +117,14 @@ def drop_parameter_stats(idata):
     return az.InferenceData(**groups)
 
 
+def _complete(idata) -> bool:
+    """Every draw of every scalar parameter is finite: a zarr store is preallocated, so an
+    interrupted run has the full draw count but NaN where sampling never reached."""
+    post = idata.posterior
+    scalars = [v for v in post.data_vars if post[v].ndim == 2]
+    return all(bool(np.isfinite(post[v].values).all()) for v in scalars)
+
+
 def load_store(store_dir: str | Path, draws: int):
     """The posterior and sample stats of a finished zarr store from `sample_lean`, or None if it
     is missing or incomplete. Lets a fit whose save failed be recovered without resampling."""
@@ -133,7 +141,8 @@ def load_store(store_dir: str | Path, draws: int):
         return None
     if post.sizes.get("draw") != draws or stats.sizes.get("draw") != draws:
         return None
-    return drop_parameter_stats(az.InferenceData(posterior=post, sample_stats=stats))
+    idata = drop_parameter_stats(az.InferenceData(posterior=post, sample_stats=stats))
+    return idata if _complete(idata) else None
 
 
 def netcdf_safe(idata):

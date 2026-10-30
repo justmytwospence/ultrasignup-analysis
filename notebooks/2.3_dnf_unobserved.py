@@ -27,7 +27,9 @@ def _(mo):
 
     The hidden DNFs are then predicted per edition: given $f_e$ finishers and the DNF probability $\bar p_e$ of a random starter there (course, the finishers' gender and age, a runner effect drawn from the starts in reporting editions, so frequent starters count as often as they start), starters until $f_e$ finishes give $k_e \sim \text{NegBinomial}(f_e, 1 - \bar p_e)$ hidden DNFs.
 
-    What it leaves out: who starts (the hidden DNFers are assumed to be like the population of starters at that course), edition effects (so predictive intervals per edition are too narrow), and uncertainty in 2.1's $r_e$ and $d_e$.
+    What it leaves out: who starts (the hidden DNFers are assumed to be like the population of starters at that course), and uncertainty in 2.1's $r_e$ and $d_e$.
+
+    Version 2 adds an edition effect on the DNF logit, $\epsilon_e \sim N(0, \tau_e^2)$, shared by every starter in an edition (weather, reroutes, cutoffs), because version 1's predictive intervals for DNF counts were far too narrow (56% inside the 94% interval).
     """)
     return
 
@@ -166,6 +168,7 @@ def _(CACHE, CORE, ftm, load_results, np, pd, process_results):
         course_x,
         courses,
         dnf,
+        edition_ids,
         editions,
         f_age,
         f_age2,
@@ -181,6 +184,7 @@ def _(CACHE, CORE, ftm, load_results, np, pd, process_results):
         s_course,
         s_gender,
         s_runner,
+        starts,
         unknown,
     )
 
@@ -200,6 +204,7 @@ def _(
     course_x,
     courses,
     dnf,
+    edition_ids,
     editions,
     expit,
     f_age,
@@ -220,6 +225,7 @@ def _(
     s_course,
     s_gender,
     s_runner,
+    starts,
     unknown,
 ):
     _avg = np.eye(2)[runner_gender] / np.bincount(runner_gender, minlength=2)
@@ -241,9 +247,15 @@ def _(
         return raw - pm.math.dot(raw, _avg)[runner_gender]
 
 
+    # every edition with a finisher or a reporting start (some reporting editions have no finisher)
+    all_editions = np.union1d(edition_ids, starts['event_distance_id'].to_numpy())
+    s_edition = np.searchsorted(all_editions, starts['event_distance_id'].to_numpy())
+    f_edition_all = np.searchsorted(all_editions, edition_ids)[f_edition]  # finisher row -> all_editions
+
+
     def build_unobserved_model(unknown='mixture'):
         """2.2's full model plus a term per non-reporting edition: 'mixture' (full) or 'naive' (all report, zero DNFs)."""
-        with pm.Model(coords={'gender': list(ftm.GENDERS), 'course': courses, 'runner': runners}) as _model:
+        with pm.Model(coords={'gender': list(ftm.GENDERS), 'course': courses, 'runner': runners, 'edition': [str(e) for e in all_editions]}) as _model:
             _pace = pm.Normal('pace_50k_mean', np.log(8.0), 0.3)
             _pace_gap = pm.Normal('pace_50k_gap', 0.0, 0.2)
             _exp = pm.Normal('distance_exponent_mean', 0.1, 0.1)
@@ -276,13 +288,16 @@ def _(
             _rho_r = pm.Deterministic('rho_runner', 2 * pm.Beta('rho_runner_01', 2, 2) - 1)
             _q = pm.Normal('dnf_runner_pace_quadratic', 0.0, 0.5)
             _w = pm.Deterministic('runner_dnf_effect', _omega_d * (_rho_r * _z1 + pt.sqrt(1 - _rho_r**2) * _z2) + _q * (_z1**2 - 1), dims='runner')
-            _eta = _level[s_course] + _s_half * _dg + _da1 * s_age + _da2 * s_age**2 + _w[s_runner]
+            # edition effect: a hot year, a reroute or a cutoff change moves every starter's DNF odds together
+            _tau_e = pm.HalfNormal('tau_edition', 0.5)
+            _ed = pm.Deterministic('edition_dnf_effect', _tau_e * pm.Normal('edition_raw', 0.0, 1.0, dims='edition'), dims='edition')
+            _eta = _level[s_course] + _s_half * _dg + _da1 * s_age + _da2 * s_age**2 + _w[s_runner] + _ed[s_edition]
             pm.Bernoulli('dnf', logit_p=_eta, observed=dnf)
 
             # non-reporting editions: log q_e = sum over finishers of log(1 - p_i)
             _rows = _u_rows
             _eta_u = (_level[f_course[_rows]] + np.array([-0.5, 0.5])[f_gender[_rows]] * _dg
-                      + _da1 * f_age[_rows] + _da2 * f_age2[_rows] + _w[f_runner[_rows]])
+                      + _da1 * f_age[_rows] + _da2 * f_age2[_rows] + _w[f_runner[_rows]] + _ed[f_edition_all[_rows]])
             _log_q = pt.inc_subtensor(pt.zeros(_n_unknown)[_u_edition], -pt.softplus(_eta_u))
             if unknown == 'mixture':
                 pm.Potential('unreported', pm.math.logaddexp(unknown_log_r_nodns + _log_q, unknown_log_not_r).sum())
@@ -293,7 +308,7 @@ def _(
 
     FINISH_SCALARS = ['pace_50k_mean', 'pace_50k_gap', 'distance_exponent_mean', 'distance_exponent_gap', 'tau', 'omega', 'sigma']
     DNF_SCALARS = ['dnf_mean', 'dnf_distance', 'dnf_gender_gap', 'dnf_age_linear', 'dnf_age_quadratic', 'tau_dnf', 'omega_dnf',
-                   'rho_course', 'rho_runner', 'dnf_runner_pace_quadratic']
+                   'rho_course', 'rho_runner', 'dnf_runner_pace_quadratic', 'tau_edition']
 
 
     def flat_draws(posterior, name):
@@ -305,7 +320,7 @@ def _(
         return (flat_draws(posterior, 'course_dnf_level')[:, f_course[rows]]
                 + np.array([-0.5, 0.5])[f_gender[rows]] * flat_draws(posterior, 'dnf_gender_gap')[:, None]
                 + flat_draws(posterior, 'dnf_age_linear')[:, None] * f_age[rows] + flat_draws(posterior, 'dnf_age_quadratic')[:, None] * f_age2[rows]
-                + flat_draws(posterior, 'runner_dnf_effect')[:, f_runner[rows]])
+                + flat_draws(posterior, 'runner_dnf_effect')[:, f_runner[rows]] + flat_draws(posterior, 'edition_dnf_effect')[:, f_edition_all[rows]])
 
 
     def unknown_terms(posterior):
@@ -315,7 +330,7 @@ def _(
         return _log_q, np.logaddexp(unknown_log_r_nodns + _log_q, unknown_log_not_r)
 
 
-    def starter_dnf_prob(posterior, n_nodes=400, seed=0):
+    def starter_dnf_prob(posterior, n_nodes=400, seed=0, new_edition=False):
         """DNF probability of a random starter in every edition, as (draw, edition): the course, the
         gender and age of the edition's finishers, and a runner effect drawn from the starts in
         reporting editions (so frequent starters count as often as they start; drawing from the
@@ -325,6 +340,9 @@ def _(
                  + np.array([-0.5, 0.5])[f_gender] * flat_draws(posterior, 'dnf_gender_gap')[:, None]
                  + flat_draws(posterior, 'dnf_age_linear')[:, None] * f_age + flat_draws(posterior, 'dnf_age_quadratic')[:, None] * f_age2)
         _wall = flat_draws(posterior, 'runner_dnf_effect')
+        # the edition's own effect, or (new_edition) a fresh one: what an edition the model has not seen would get
+        _ed = (_rng.standard_normal((len(_base), len(all_editions))) * flat_draws(posterior, 'tau_edition')[:, None]) if new_edition else flat_draws(posterior, 'edition_dnf_effect')
+        _base = _base + _ed[:, f_edition_all]
         _n_ed = np.bincount(f_edition)
         _out = np.empty((len(_base), len(_n_ed)))
         for _s in range(len(_base)):
@@ -341,6 +359,7 @@ def _(
         FINISH_SCALARS,
         build_unobserved_model,
         flat_draws,
+        s_edition,
         starter_dnf_prob,
         unknown_d,
         unknown_log_r_nodns,
@@ -364,7 +383,7 @@ def _(mo):
 def _(editions, plt, pm, starter_dnf_prob, unknown, unobserved_model):
     with unobserved_model:
         _prior = pm.sample_prior_predictive(draws=100, var_names=['course_dnf_level', 'dnf_gender_gap', 'dnf_age_linear', 'dnf_age_quadratic',
-                                                                  'omega_dnf', 'rho_runner', 'dnf_runner_pace_quadratic', 'runner_dnf_effect'], random_seed=1).prior
+                                                                  'omega_dnf', 'rho_runner', 'dnf_runner_pace_quadratic', 'runner_dnf_effect', 'edition_dnf_effect', 'tau_edition'], random_seed=1).prior
     _p_prior = starter_dnf_prob(_prior, n_nodes=16)
     _fig, _ax = plt.subplots(figsize=(8, 3.5))
     _ax.hist(_p_prior.ravel(), bins=50, range=(0, 1), density=True, color='#999999', label='prior: random starter, per edition')
@@ -450,7 +469,7 @@ def _(
 
 
     # Bump when the model changes, so a cached trace is never reused for a different model.
-    _MODEL_VERSION = 1
+    _MODEL_VERSION = 2  # 2: edition DNF effect
 
 
     def fit_unobserved(model, label, minutes):
@@ -522,7 +541,8 @@ def _(editions, np, pd, starter_dnf_prob, unknown, unobserved_trace):
     hidden_dnf_draws = _rng.negative_binomial(np.maximum(_f, 1)[None, :], 1 - starter_p)
 
     _check = (~unknown) & (editions['year'].to_numpy() >= 2010)
-    _pred = hidden_dnf_draws[:, _check]
+    # checking against posted counts: predict as for an unseen edition (fresh edition effect)
+    _pred = _rng.negative_binomial(np.maximum(_f, 1)[None, :], 1 - starter_dnf_prob(_sub, new_edition=True))[:, _check]
     _obs = editions['n_dnf'].to_numpy()[_check]
     dnf_count_check = pd.DataFrame({
         'posted': _obs, 'predicted_mean': _pred.mean(0),
@@ -589,6 +609,7 @@ def _(
     np,
     s_age,
     s_course,
+    s_edition,
     s_gender,
     s_runner,
     unknown_terms,
@@ -599,7 +620,7 @@ def _(
         _post = trace.posterior.isel(draw=slice(None, None, 8))
         _eta = (flat_draws(_post, 'course_dnf_level')[:, s_course] + np.array([-0.5, 0.5])[s_gender] * flat_draws(_post, 'dnf_gender_gap')[:, None]
                 + flat_draws(_post, 'dnf_age_linear')[:, None] * s_age + flat_draws(_post, 'dnf_age_quadratic')[:, None] * s_age**2
-                + flat_draws(_post, 'runner_dnf_effect')[:, s_runner])
+                + flat_draws(_post, 'runner_dnf_effect')[:, s_runner] + flat_draws(_post, 'edition_dnf_effect')[:, s_edition])
         _ll_starts = np.where(dnf == 1, -np.logaddexp(0, -_eta), -np.logaddexp(0, _eta))
         _log_q, _term = unknown_terms(_post)
         _ll = np.concatenate([_ll_starts, _log_q if naive else _term], axis=1).astype(np.float32)
