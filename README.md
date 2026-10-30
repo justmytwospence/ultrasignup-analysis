@@ -24,10 +24,10 @@ notebooks do not have yet (see Open questions below).
 - Which course is hardest for its terrain, independent of its length? (planned: course effect net of gain per km)
 - Do destination races attract such strong fields that they look easier than they are? (1.2 vs 1.1)
 
-### Editions and years
-- Which editions were unusually hard or easy (heat, snow, mud) relative to their course's norm? (planned: edition effect)
+### Race years
+- Which years of a race were unusually hard or easy (heat, snow, mud) relative to that course's norm? (planned: race-year effect)
 - Is there a trend in pace over the years, as fields broaden? (planned: year term)
-- Which editions report their DNFs, and what predicts it? (2.1)
+- Which races post their DNFs, and what predicts it? (2.1)
 
 ### Runners
 - Who is fastest, net of the courses they happened to run? (runner effect, 1.2)
@@ -42,9 +42,9 @@ notebooks do not have yet (see Open questions below).
 - Which runners are DNF-prone beyond what their pace predicts, and which are unusually durable? (runner DNF effect, 2.2)
 - How does DNF risk change with distance, age and gender? (2.2)
 - How much does a first-timer's risk of dropping differ from a veteran's? (planned: experience term)
-- Does DNF risk rise with the course's climbing, or on hot or muddy years? (planned: terrain and edition effects)
+- Does DNF risk rise with the course's climbing, or on hot or muddy years? (planned: terrain and race-year effects)
 - Do runners who DNF once drop again more often, or bounce back? (planned: runner history)
-- How many DNFs are hidden in the editions that post only finishers, and does leaving them out bias what we learn about course difficulty? (2.3)
+- How many DNFs are hidden in races that post only finishers, and does leaving them out bias what we learn about course difficulty? (2.3)
 - What share of a course's drops come from being a hard course, and what share from who showed up? (course vs runner DNF effects, 2.2)
 
 ### Population
@@ -52,7 +52,7 @@ notebooks do not have yet (see Open questions below).
 - How does pace change with age, and where is the peak? (1.1)
 
 ### Prediction
-- Who will win a race? For every registered runner, what are the odds of winning, of a podium or top 10, and of finishing at all? (simulate the whole field from the joint finish and DNF posterior; planned: needs entrant rosters and an edition effect for the day's conditions)
+- Who will win a race? For every registered runner, what are the odds of winning, of a podium or top 10, and of finishing at all? (simulate the whole field from the joint finish and DNF posterior; planned: needs entrant rosters and a race-year effect for the day's conditions)
 - What finish time, with an interval, should a given runner expect at a given course? (posterior predictive)
 - What is the chance they finish at all, and at what pace is that chance best? (2.2, 2.3)
 
@@ -68,9 +68,9 @@ uv run pytest
 
 Results come from a DuckDB database of UltraSignup races, courses, runners and results, read
 over the network or from a local copy. Starts are finishes or DNFs (no-shows and
-disqualifications are dropped). About a third of editions hide their results, so they are
+disqualifications are dropped). About a third of races hide their results, so they are
 absent; courses are identified across years and renames, so a course effect pools every
-edition of a race.
+year of a race.
 
 
 ```python
@@ -93,9 +93,9 @@ con = data_source.connect(local=True)          # offline, or to pin a long fit t
 | `0.1_kcore.py` | Picks a dense (α, β)-core of runners and courses for models with runner effects |
 | `1.1_finish_courses.py` | Pace by distance, gender and age, and course difficulty, on every finisher |
 | `1.2_finish_runners.py` | Adds runner effects on the core, separating course difficulty from field strength |
-| `2.1_dnf_reporting.py` | Which race editions report their DNFs |
+| `2.1_dnf_reporting.py` | Which races post their DNFs |
 | `2.2_dnf_observed.py` | Adds DNFs to 1.2: runner and course DNF tendencies, correlated with pace |
-| `2.3_dnf_unobserved.py` | Adds editions that post no DNFs, via 2.1's reporting model, and predicts their hidden DNFs |
+| `2.3_dnf_unobserved.py` | Adds races that post no DNFs, via 2.1's reporting model, and predicts their hidden DNFs |
 
 Names are `<track>.<step>_<topic>`: track 0 prepares data, 1 models finish times, 2 models
 DNFs; a step builds on the earlier steps of its track, and a new model takes the next step
@@ -119,7 +119,7 @@ Known modeling problems and planned work, grouped by notebook.
   guesses. Check how many rows each bound drops.
 - **Spot-check inferred distances and formats** (backyard ultras posted as distance races)
   before trusting the k-core.
-- **Hidden results**: about a third of editions show results only on runner pages and are
+- **Hidden results**: about a third of races show results only on runner pages and are
   absent. If hiding correlates with race type or organizer, course coverage is biased;
   `events.results_hidden` and `races.results_state = 'hidden'` let us measure that.
 - **Point-in-time runner strength** has to come from `results` itself (each runner's prior
