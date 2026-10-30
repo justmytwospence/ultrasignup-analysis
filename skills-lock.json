@@ -1,6 +1,18 @@
 {
   "version": 1,
   "skills": {
+    "arviz-diagnostics": {
+      "source": "pymc-labs/pymc-modeling",
+      "sourceType": "github",
+      "skillPath": "skills/arviz-diagnostics/SKILL.md",
+      "computedHash": "16becd765566052602ca007a39fd819f97ef8762b7edc2a2511f91b167f1d0ca"
+    },
+    "bayesian-workflow": {
+      "source": "learning-bayesian-statistics/baygent-skills",
+      "sourceType": "github",
+      "skillPath": "bayesian-workflow/SKILL.md",
+      "computedHash": "a7190fe6566c8aa004aadf07146eeb5ea8228f6e8beef14bf1f28b0ad9e86018"
+    },
     "marimo-notebook": {
       "source": "marimo-team/skills",
       "sourceType": "github",
@@ -12,6 +24,24 @@
       "sourceType": "github",
       "skillPath": "skills/marimo-pair/SKILL.md",
       "computedHash": "56b1540731d05d5d85e8e59fbad67205b8a59e89bb6eb0da65341fcd558cdb1d"
+    },
+    "prior-elicitation": {
+      "source": "pymc-labs/pymc-modeling",
+      "sourceType": "github",
+      "skillPath": "skills/prior-elicitation/SKILL.md",
+      "computedHash": "82ec9fbe86ecf5205e244cb46d025f38521add56f0445619adb590fe3dd1ab46"
+    },
+    "pymc-modeling": {
+      "source": "pymc-labs/pymc-modeling",
+      "sourceType": "github",
+      "skillPath": "skills/pymc-modeling/SKILL.md",
+      "computedHash": "19f8ed90a5aed500b49f8977b705c32ef7339f69b90065a2fcf10b210f6cefb0"
+    },
+    "pytensor-workflows": {
+      "source": "pymc-labs/pymc-modeling",
+      "sourceType": "github",
+      "skillPath": "skills/pytensor-workflows/SKILL.md",
+      "computedHash": "f7e0634b99a5f215d1d0d7c3b9cf9d740427111054005ef5124dc710a3c6127e"
     }
   }
 }
