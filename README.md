@@ -1,40 +1,59 @@
 # UltraSignup analysis
 
-Bayesian models of ultramarathon finish times and DNF rates over every UltraSignup result.
+Why do some ultramarathons chew people up while others are gentle? A 100-miler with 20,000 feet
+of climbing and a flat 50k on a bike path both show up as "an ultra" on a results page, and a
+fast time in one tells you little about the other. Raw finish times and DNF rates mix together
+four things: how hard the course is, how strong the field was, what the weather did that year,
+and who the runner is. This project pulls them apart.
+
+It fits Bayesian generative models, in PyMC and marimo notebooks, to every UltraSignup result
+(marathon to 100 miles). Each model says how a finish time, or a drop, could have come about,
+and the posterior then answers questions that no leaderboard can: which course is hardest for
+its terrain, who is unusually good on climbs, and how many runners quietly dropped from races
+that never posted their DNFs. Every estimate comes with its uncertainty, so a small field or a
+single odd year can't pass for a trend.
 
 ## Questions the models should answer
 
 Each question names the model term that answers it. Ones marked (planned) need a term the
 notebooks do not have yet (see Open questions below).
 
-**Courses**
+### Courses
 - Which courses are hardest at a given distance? (course effect, 1.1)
 - How much of a course's difficulty is field strength rather than the course? (course effects with and without runner effects, 1.1 vs 1.2)
 - Which course is hardest for its terrain, independent of its length? (planned: course effect net of gain per km)
-- Which courses drop the most runners at a given pace? (course DNF effect, 2.2)
-- Are harder courses also the ones with more DNFs, once runner quality is accounted for? (course pace-DNF correlation, 2.2)
+- Do destination races attract such strong fields that they look easier than they are? (1.2 vs 1.1)
 
-**Editions and years**
+### Editions and years
 - Which editions were unusually hard or easy (heat, snow, mud) relative to their course's norm? (planned: edition effect)
 - Is there a trend in pace over the years, as fields broaden? (planned: year term)
 - Which editions report their DNFs, and what predicts it? (2.1)
-- How many DNFs are hidden in editions that post only finishers? (2.3)
 
-**Runners**
+### Runners
 - Who is fastest, net of the courses they happened to run? (runner effect, 1.2)
 - Who is disproportionately good on steep courses or long distances? (planned: runner-by-gain and runner-by-distance slopes)
 - Who is consistent, and who is erratic? (planned: per-runner variance)
-- Who is likely to drop, and are the fastest runners the least likely to? (runner DNF effect and its correlation with pace, 2.2)
 - How does a first-time ultrarunner compare with a veteran? (planned: experience term)
 
-**Population**
+### DNFs
+- Which courses drop the most runners at a given pace and distance? (course DNF effect, 2.2)
+- Are hard courses also high-DNF courses, once runner quality is accounted for? (course pace-DNF correlation, 2.2)
+- Do slower runners drop more often, and do the very fastest also drop more (going out too hard)? (runner pace-DNF curve, 2.2)
+- Which runners are DNF-prone beyond what their pace predicts, and which are unusually durable? (runner DNF effect, 2.2)
+- How does DNF risk change with distance, age and gender? (2.2)
+- How much does a first-timer's risk of dropping differ from a veteran's? (planned: experience term)
+- Does DNF risk rise with the course's climbing, or on hot or muddy years? (planned: terrain and edition effects)
+- Do runners who DNF once drop again more often, or bounce back? (planned: runner history)
+- How many DNFs are hidden in the editions that post only finishers, and does leaving them out bias what we learn about course difficulty? (2.3)
+- What share of a course's drops come from being a hard course, and what share from who showed up? (course vs runner DNF effects, 2.2)
+
+### Population
 - How does pace scale with distance, and does that differ by gender? (1.1)
 - How does pace change with age, and where is the peak? (1.1)
-- How does DNF probability scale with distance, age and gender? (2.2)
 
-**Prediction**
+### Prediction
 - What finish time, with an interval, should a given runner expect at a given course? (posterior predictive)
-- What is the chance they finish at all? (2.2, 2.3)
+- What is the chance they finish at all, and at what pace is that chance best? (2.2, 2.3)
 
 ## Setup
 
@@ -59,7 +78,7 @@ con = data_source.connect(local=True)          # offline, or to pin a long fit t
 
 ## Notebooks
 
-marimo notebooks, run in order:
+[marimo](https://marimo.io) notebooks, run in order. Each adds one thing to the one before it, and each follows the same workflow: data, model with a prior predictive check, fit and convergence, posterior predictive checks, model comparison (PSIS-LOO), prior sensitivity, results.
 
 | Notebook | What it does |
 |---|---|
