@@ -13,6 +13,12 @@
       "skillPath": "bayesian-workflow/SKILL.md",
       "computedHash": "a7190fe6566c8aa004aadf07146eeb5ea8228f6e8beef14bf1f28b0ad9e86018"
     },
+    "causal-inference": {
+      "source": "learning-bayesian-statistics/baygent-skills",
+      "sourceType": "github",
+      "skillPath": "causal-inference/SKILL.md",
+      "computedHash": "df2e262a257d38e0808d65acafd80cc71b748ccdf7aa24eebfbc587e8ec2bcb4"
+    },
     "marimo-notebook": {
       "source": "marimo-team/skills",
       "sourceType": "github",
