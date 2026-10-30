@@ -1,12 +1,40 @@
 # UltraSignup analysis
 
-Bayesian models of ultramarathon finish times and DNF rates, built on a complete mirror of
-UltraSignup results.
+Bayesian models of ultramarathon finish times and DNF rates over every UltraSignup result.
 
-The data comes from [ultrasignup-mirror](https://github.com/justmytwospence/ultrasignup-mirror),
-a self-hosted sync engine that keeps every UltraSignup race, result, entrant list and runner
-history in DuckDB and serves its analyst schema over DuckDB's Quack protocol. This repo only
-reads it.
+## Questions the models should answer
+
+Each question names the model term that answers it. Ones marked (planned) need a term the
+notebooks do not have yet (see [docs/open-questions.md](docs/open-questions.md)).
+
+**Courses**
+- Which courses are hardest at a given distance? (course effect, 1.1)
+- How much of a course's difficulty is field strength rather than the course? (course effects with and without runner effects, 1.1 vs 1.2)
+- Which course is hardest for its terrain, independent of its length? (planned: course effect net of gain per km)
+- Which courses drop the most runners at a given pace? (course DNF effect, 2.2)
+- Are harder courses also the ones with more DNFs, once runner quality is accounted for? (course pace-DNF correlation, 2.2)
+
+**Editions and years**
+- Which editions were unusually hard or easy (heat, snow, mud) relative to their course's norm? (planned: edition effect)
+- Is there a trend in pace over the years, as fields broaden? (planned: year term)
+- Which editions report their DNFs, and what predicts it? (2.1)
+- How many DNFs are hidden in editions that post only finishers? (2.3)
+
+**Runners**
+- Who is fastest, net of the courses they happened to run? (runner effect, 1.2)
+- Who is disproportionately good on steep courses or long distances? (planned: runner-by-gain and runner-by-distance slopes)
+- Who is consistent, and who is erratic? (planned: per-runner variance)
+- Who is likely to drop, and are the fastest runners the least likely to? (runner DNF effect and its correlation with pace, 2.2)
+- How does a first-time ultrarunner compare with a veteran? (planned: experience term)
+
+**Population**
+- How does pace scale with distance, and does that differ by gender? (1.1)
+- How does pace change with age, and where is the peak? (1.1)
+- How does DNF probability scale with distance, age and gender? (2.2)
+
+**Prediction**
+- What finish time, with an interval, should a given runner expect at a given course? (posterior predictive)
+- What is the chance they finish at all? (2.2, 2.3)
 
 ## Setup
 
@@ -22,15 +50,12 @@ uv run pytest
 from utils import mirror
 from utils.data_processing import load_results, process_results
 
-con = mirror.connect()                    # live: queries run on the mirror
+con = mirror.connect()                    # live
 results = process_results(load_results(con))
 
-mirror.pull()                             # copy the analyst tables to data/mirror.duckdb
+mirror.pull()                             # copy the tables to data/mirror.duckdb
 con = mirror.connect(local=True)          # offline, or to pin a long fit to one snapshot
 ```
-
-The tables (`races`, `results`, `runners`, `courses`, `events`, `relay_results`, `about`) are
-documented with ERDs in the mirror's `docs/schema.md`.
 
 ## Notebooks
 

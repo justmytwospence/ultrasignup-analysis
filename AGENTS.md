@@ -28,8 +28,7 @@ a complete DuckDB mirror of UltraSignup and serves it read-only over DuckDB's Qu
   stream two remote tables at once (no join of two remote tables: pull, or make a local
   TEMP TABLE from one first). Needs WireGuard off the LAN.
 - DuckDB is pinned to 2.0 (the mirror's version, required by Quack).
-- `data/` is gitignored: `mirror.duckdb`, `cache/` (k-core subsets and traces) and `legacy/`
-  (the 2025 scrape and old checkouts, kept until the refits on mirror data are done).
+- `data/` is gitignored: `mirror.duckdb`, and `cache/` (k-core subsets and traces).
 
 ## Setup and tests
 
@@ -51,7 +50,6 @@ writes its output for later ones in `data/cache/<notebook stem>/`: `0.1_kcore/co
 (the dev core), `1.1_finish_courses/course_effects.parquet`,
 `1.2_finish_runners/{course,runner}_effects.parquet`,
 `2.1_dnf_reporting/edition_reporting.parquet`, `2.2_dnf_observed/{course,runner}_effects.parquet`. Only models with runner effects need the core.
-`notebooks/legacy_ipynb/` holds the pre-marimo originals, read only.
 
 Workflow conventions (1.1 and 2.1 are the templates): sections Setup, Data, Model (fixed
 priors, simulator or prior predictive check), Fit (summary, rank plots), Posterior predictive
@@ -90,7 +88,7 @@ a model version and a data hash.
   chosen in 0.1; check `n_courses` after subsetting, and loosen for final fits. The full (α, β) sweep takes about a minute; its cache key includes a data
   fingerprint.
 
-Open modeling problems and planned work: `docs/open-questions.md`. Past plans: `docs/history/`.
+Open modeling problems and planned work: `docs/open-questions.md`.
 
 ## Conventions
 

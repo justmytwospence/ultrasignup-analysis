@@ -1,4 +1,4 @@
-# Local data: mirror pulls, model caches, legacy scraped DBs
+# Local data: database pulls and model caches
 data/
 .env
 
