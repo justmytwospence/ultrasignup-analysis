@@ -98,7 +98,7 @@ con = data_source.connect(local=True)          # offline, or to pin a long fit t
 
 ## Notebooks
 
-[marimo](https://marimo.io) notebooks, run in order. Each adds one thing to the one before it, and each follows the same workflow: data, model with a prior predictive check, fit and convergence, posterior predictive checks, model comparison (PSIS-LOO), prior sensitivity, results.
+[marimo](https://marimo.io) notebooks, run in order. Each adds one thing to the one before it. Model notebooks follow the same workflow: data, model with a prior predictive check, fit and convergence, posterior predictive checks, model comparison (PSIS-LOO), prior sensitivity, results. The validation notebook instead scores actual held-out predictions from refits.
 
 | Notebook | What it does |
 |---|---|
@@ -108,6 +108,7 @@ con = data_source.connect(local=True)          # offline, or to pin a long fit t
 | `2.1_dnf_reporting.py` | Which races post their DNFs |
 | `2.2_dnf_observed.py` | Adds DNFs to 1.2: runner and course DNF tendencies, correlated with pace |
 | `2.3_dnf_unobserved.py` | Adds races that post no DNFs, via 2.1's reporting model, and predicts their hidden DNFs |
+| `2.4_dnf_validation.py` | Masks individual reporting races and refits to test hidden-DNF counts against a simple count baseline |
 
 Names are `<track>.<step>_<topic>`: track 0 prepares data, 1 models finish times, 2 models
 DNFs; a step builds on the earlier steps of its track, and a new model takes the next step
@@ -116,6 +117,12 @@ number.
 ```sh
 uv run marimo edit notebooks/0.1_kcore.py
 ```
+
+2.4 uses one fixed, distance/finisher-count-stratified 20% holdout of individual race
+occurrences, keeping other years and sibling distances available. Masked races are known
+nonreporters; it tests historical count reconstruction, not reporting classification or
+forecasting. The target is the DNF count surviving the existing cleaning filters, conditional
+on the fixed core. Validation artifacts are separate from production caches.
 
 ## Open questions
 
@@ -162,6 +169,17 @@ Known modeling problems and planned work, grouped by notebook.
 
 ### 2.3 dnf_unobserved
 
+- **V2 large-core fit completed** on the pinned local snapshot: 4 chains, 2,000 warm-up and
+  1,500 retained draws per chain, target acceptance 0.9. No divergences or tree-depth hits;
+  population and runner effects pass the R-hat screen. Course/race-year separation still mixes
+  slowly (10 course and 49 race-year coordinates have R-hat > 1.01; maximum 1.031), although
+  their combined race-year logits mix well (maximum R-hat 1.005, minimum bulk ESS 2,249).
+  Investigate this separation before reporting standalone course DNF rankings.
+- **V2 predictive checks**: 93.75% coverage of nominal 94% count intervals across 1,344
+  reporting race-years since 2010, but 59.6% coverage of nominal 50% intervals. Coverage varies
+  by distance (94% intervals cover about 91% at 42–60 km versus 96% above 60 km). These are
+  in-sample checks with fresh race-year effects, not held-out validation. PSIS remains unreliable
+  for many observations; do not treat the single-model LOO table as a validated comparison.
 - **Hierarchy identifiability**: the population/course/race hierarchy risks sigma_race
   collapsing to zero. Fit a two-level version and compare with LOO.
 - **Censoring penalty approximation**: `-n_finishers * log E[P(finish)]` uses an expectation.
@@ -170,6 +188,28 @@ Known modeling problems and planned work, grouped by notebook.
   numerator. Replace with the exact marginal or a shared latent.
 - **Informative quadratic prior**: `beta_dist_dnf_quad ~ N(0.5, 0.3)` looks tuned to the data.
   Justify it or widen it toward N(0, 0.5) and check sensitivity.
+
+### 2.4 dnf_validation
+
+- **Masked-race refits completed:** 263 individual races across 114 evaluated courses, within
+  the fixed 172-course core. The full pipeline took 4h14m on the pinned local snapshot.
+  Reporting, baseline and joint fits had no retained-sample divergences or tree-depth hits.
+- **The simpler count baseline wins this comparison:** mean WIS 9.03 versus 9.82 for the
+  joint model (lower is better). Paired joint-minus-baseline WIS is +0.79, with a 94%
+  course-clustered bootstrap evaluation interval of [0.30, 1.37]; equal-course weighting
+  gives +0.72 [0.23, 1.24]. These are evaluation intervals, not posterior credible intervals.
+- **Coverage does not imply sharp predictions:** nominal 94% intervals cover 94.7% of races
+  for the baseline and 95.8% for the joint model, but their mean widths are 101.4 and 127.5
+  DNFs. Of 9,680 actual held-out DNFs, predicted totals average 9,893 and 11,375 respectively.
+  The predeclared second seed/800-donor check gives joint WIS 9.86 and coverage 95.4%, so the
+  primary result is not reversed by that numerical check.
+- **Interpretation remains conditional and provisional:** five course and 30 race-effect
+  coordinates have R-hat above 1.01 (maximum 1.029), despite good population/runner screens.
+  Fresh-effect-integrated predictive means also mix imperfectly (maximum R-hat 1.026,
+  minimum bulk ESS 329); this is not merely a component-separation issue.
+  This frozen-specification, out-of-fit test does not establish transportability to naturally
+  nonreporting races, validate core selection, or count runners excluded by cleaning. It is
+  not an untouched external test. Do not retune against this holdout and relabel it validation.
 
 ### Empirical priors (`utils/empirical_priors.py`)
 
