@@ -440,14 +440,16 @@ def predict_hidden_counts(posterior, data, target_ids, *, seed, posterior_draws_
 
 
 def integrated_target_moments(posterior, data, target_ids, *, seed, posterior_draws_per_chain=500,
-                              nodes=64, edition_nodes=8):
+                              nodes=64, edition_nodes=8, donor_scope="all"):
     """Approximate fresh-effect-integrated means ONLY for posterior mixing diagnostics.
 
     Returns ``mean_probability`` = E_epsilon[p(epsilon)] and ``mean_count`` =
     E_epsilon[F*p(epsilon)/(1-p(epsilon))], retaining chain/draw/did. Each
     p(epsilon) averages over retained target finishers and a seeded sample of
     reporting *starts*, so repeated runners retain their start-frequency weight.
-    Donor indices are fixed per target across all chains/draws. Fresh
+    With donor_scope="course", only starts on the target's course are eligible;
+    the default "all" uses all remaining reporting starts. Donor indices are fixed
+    per target across all chains/draws. Fresh
     Normal(0, tau_edition) effects use Gauss-Hermite quadrature, never fitted
     target effects. This common-donor/quadrature approximation removes predictive
     simulation noise for mean-mixing diagnostics; it is NOT a scored prediction.
@@ -456,6 +458,8 @@ def integrated_target_moments(posterior, data, target_ids, *, seed, posterior_dr
     As in production prediction, endpoint probabilities are clipped to [eps,1-eps]
     before the count transform, with clipped quadrature evaluations recorded.
     """
+    if donor_scope not in ("all", "course"):
+        raise ValueError("donor_scope must be 'all' or 'course'")
     indices = _posterior(posterior, posterior_draws_per_chain)
     ids = np.sort(_ids(target_ids))
     for name, size in (("nodes", nodes), ("edition_nodes", edition_nodes)):
@@ -477,8 +481,27 @@ def integrated_target_moments(posterior, data, target_ids, *, seed, posterior_dr
     rows = {int(did): np.flatnonzero(np.asarray(data.edition_ids)[data.f_edition] == did) for did in ids}
     if any(not len(v) for v in rows.values()):
         raise ValueError("Every target needs F>0")
-    donors = {int(did): data.s_runner[_rng(seed, "common", "common", did, "integrated-donors")
-                                     .integers(0, len(data.s_runner), nodes)] for did in ids}
+    pools = {int(did): data.s_runner for did in ids}
+    if donor_scope == "course":
+        s_course = np.asarray(data.s_course)
+        f_course = np.asarray(data.f_course)
+        if (s_course.shape != np.asarray(data.s_runner).shape or s_course.ndim != 1
+                or not np.issubdtype(s_course.dtype, np.integer)
+                or np.any(s_course < 0) or np.any(s_course >= len(data.courses))):
+            raise ValueError("Invalid starter course indices")
+        if (f_course.shape != np.asarray(data.f_edition).shape or f_course.ndim != 1
+                or not np.issubdtype(f_course.dtype, np.integer)
+                or np.any(f_course < 0) or np.any(f_course >= len(data.courses))):
+            raise ValueError("Invalid finisher course indices")
+        for did, r in rows.items():
+            courses = np.unique(f_course[r])
+            if len(courses) != 1:
+                raise ValueError("Every target must have exactly one course")
+            pools[did] = np.asarray(data.s_runner)[s_course == courses[0]]
+            if not len(pools[did]):
+                raise ValueError(f"No reporting starts for target {did} course")
+    donors = {int(did): pools[int(did)][_rng(seed, "common", "common", did, "integrated-donors")
+                                       .integers(0, len(pools[int(did)]), nodes)] for did in ids}
     abscissae, weights = np.polynomial.hermite.hermgauss(edition_nodes)
     abscissae, weights = np.sqrt(2) * abscissae, weights / np.sqrt(np.pi)
     shape = (posterior.sizes["chain"], len(indices), len(ids))
@@ -518,7 +541,8 @@ def integrated_target_moments(posterior, data, target_ids, *, seed, posterior_dr
                       attrs={"purpose": "mixing diagnostics ONLY; not scored predictions",
                              "approximation": "Gauss-Hermite fresh race effects with common seeded training-start donors",
                              "seed": int(seed), "nodes": int(nodes), "edition_nodes": int(edition_nodes),
-                             "donor_population": "remaining_reporting_starts", "common_donors_across_chain_draw": True,
+                             "donor_population": "remaining_reporting_starts", "donor_scope": donor_scope,
+                             "common_donors_across_chain_draw": True,
                              "max_finisher_batch": 64, "endpoint_clip_count": clipped, "probability_epsilon": eps})
 
 

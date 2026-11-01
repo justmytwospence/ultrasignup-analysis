@@ -228,7 +228,15 @@ Known modeling problems and planned work, grouped by notebook.
   holdout would be unjustified. Overprediction is concentrated above 90 km. About 98% of
   joint predictive moment variance comes from varying conditional means (race effects,
   posterior uncertainty and donor simulation together), rather than final count noise.
-  Investigate race-effect/donor calibration; donor representativeness is not yet isolated.
+  Investigate race-effect/donor calibration; this calculation alone does not isolate donor
+  representativeness.
+- **Donor-pool sensitivity:** holding posterior/demographics fixed, own-course rather than
+  all-course reporting-start donors reduce the integrated diagnostic total from 11,422 to
+  10,833 (actual 9,680). A second seed with 256 rather than 128 donors gives 11,315 to 10,813:
+  about 31–34% of excess is removed, not all. The improvement concentrates at 120–165 km;
+  the 42–60 km excess worsens. Fresh-race integration still raises own-course expected counts
+  about 28%. These are diagnostic means, not new scores or evidence that course-specific
+  donors represent missing entrants. No model was refitted or validation result replaced.
 
 ### Empirical priors (`utils/empirical_priors.py`)
 

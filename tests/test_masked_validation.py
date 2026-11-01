@@ -553,6 +553,80 @@ def test_integrated_target_moments_start_frequency_donors(setup):
     assert result.attrs["donor_population"] == "remaining_reporting_starts"
 
 
+def test_integrated_target_moments_course_donors_and_default_oracle(setup):
+    from scipy.special import expit
+
+    _, _, data, heldout = setup
+    post = fake_posterior(data, level=0.)
+    post.runner_dnf_effect[:] = 0
+    post.runner_dnf_effect.values[:, :, :4] = [-2, -1, 1, 2]
+    # One distinct constant-risk donor per course, repeated as training starts.
+    data = replace(data, s_course=np.repeat(np.arange(4), [3, 5, 2, 4]),
+                   s_runner=np.repeat(np.arange(4), [3, 5, 2, 4]))
+    kwargs = dict(seed=248, posterior_draws_per_chain=3, nodes=19)
+    result = mv.integrated_target_moments(post, data, heldout, donor_scope="course", **kwargs)
+    for did, effect in zip(heldout, [-2, -1, 1, 2]):
+        p = expit(effect)
+        np.testing.assert_allclose(result.mean_probability.sel(did=did), p)
+        np.testing.assert_allclose(result.mean_count.sel(did=did), 4 * p / (1 - p))
+    assert result.attrs["donor_scope"] == "course"
+    # Adding/replacing other-course starts cannot affect this target's pool.
+    altered = replace(data, s_runner=np.r_[data.s_runner[:3], np.full(50, 3)],
+                      s_course=np.r_[data.s_course[:3], np.ones(50, dtype=int)])
+    one = mv.integrated_target_moments(post, data, [2], donor_scope="course", **kwargs)
+    xr.testing.assert_identical(one, mv.integrated_target_moments(post, altered, [2], donor_scope="course", **kwargs))
+    # The default reproduces the original seeded all-start algorithm exactly.
+    default = mv.integrated_target_moments(post, data, [2], **kwargs)
+    xr.testing.assert_identical(default, mv.integrated_target_moments(post, data, [2], donor_scope="all", **kwargs))
+    sampled = data.s_runner[mv._rng(248, "common", "common", 2, "integrated-donors").integers(0, len(data.s_runner), 19)]
+    p = expit(post.runner_dnf_effect.values[0, 0, sampled]).astype(float).mean()
+    np.testing.assert_allclose(default.mean_probability, p, rtol=1e-7)
+    assert default.attrs["donor_scope"] == "all"
+
+
+def test_integrated_target_moments_course_start_frequency(setup):
+    from scipy.special import expit
+
+    _, _, data, _ = setup
+    post = fake_posterior(data, level=0.)
+    post.runner_dnf_effect.values[:, :, :2] = [-4, 4]
+    data = replace(data, s_runner=np.array([0] * 99 + [1, 1]),
+                   s_course=np.array([0] * 100 + [1]))
+    result = mv.integrated_target_moments(post, data, [2], seed=249, posterior_draws_per_chain=2,
+                                           nodes=2000, donor_scope="course")
+    assert float(result.mean_probability.mean()) == pytest.approx(.99 * expit(-4) + .01 * expit(4), abs=.005)
+
+
+@pytest.mark.parametrize("case", ["scope", "empty_pool", "mixed_target", "start_shape", "start_negative",
+                                 "start_out_of_range", "start_float", "finisher_shape", "finisher_invalid"])
+def test_integrated_target_moments_course_invalid(setup, case):
+    _, _, data, _ = setup
+    post = fake_posterior(data)
+    kwargs = dict(seed=250, posterior_draws_per_chain=2, donor_scope="course")
+    if case == "scope":
+        kwargs["donor_scope"] = "invalid"
+    elif case == "empty_pool":
+        data = replace(data, s_course=np.ones_like(data.s_course))
+    elif case == "mixed_target":
+        course = data.f_course.copy()
+        course[np.flatnonzero(data.edition_ids[data.f_edition] == 2)[0]] = 1
+        data = replace(data, f_course=course)
+    elif case == "start_shape":
+        data = replace(data, s_course=data.s_course[:-1])
+    elif case == "start_negative":
+        data = replace(data, s_course=np.full_like(data.s_course, -1))
+    elif case == "start_out_of_range":
+        data = replace(data, s_course=np.full_like(data.s_course, len(data.courses)))
+    elif case == "start_float":
+        data = replace(data, s_course=data.s_course.astype(float))
+    elif case == "finisher_shape":
+        data = replace(data, f_course=data.f_course[:-1])
+    elif case == "finisher_invalid":
+        data = replace(data, f_course=np.full_like(data.f_course, -1))
+    with pytest.raises(ValueError):
+        mv.integrated_target_moments(post, data, [2], **kwargs)
+
+
 def test_integrated_target_moments_bounded_runner_and_finisher_arrays(setup, monkeypatch):
     _, _, data, _ = setup
     # Repeat finisher rows to require more than one 64-finisher chunk.

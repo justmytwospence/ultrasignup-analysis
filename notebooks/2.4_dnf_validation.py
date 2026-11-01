@@ -807,6 +807,119 @@ def bias_findings(mo):
 
 
 @app.cell(hide_code=True)
+def donor_heading(mo):
+    mo.md("""
+    ### Donor-pool sensitivity
+
+    Compare all remaining reporting starts with remaining reporting starts from the target's own course. Both pools include finishers and DNFs and preserve repeated-start weighting; neither includes any masked race. The posterior, target finisher demographics and race-effect distribution remain fixed. This checks sensitivity to which latent runner DNF effects are averaged, not transportability of either donor population.
+
+    Use 100 evenly spaced saved draws per chain (or fewer in smoke mode), 128 common donors per target and eight-node quadrature. Also evaluate the fresh effect at zero to distinguish donor differences from their interaction with race-effect integration. Repeat the integrated comparison with a second fixed seed and 256 donors to assess donor Monte Carlo sensitivity. These are expected-count diagnostics, not replacement scores; no model is fitted or tuned.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def donor_pool_audit(heldout_ids, joint_data, np, pd, targets):
+    donor_pool_audit=targets[['did','course_id','distance_bin','n_finishers']].copy()
+    donor_pool_sizes=pd.DataFrame({'course_id':np.asarray(joint_data.courses)[joint_data.s_course],'runner':np.asarray(joint_data.runners)[joint_data.s_runner],'did':joint_data.starts['event_distance_id'].to_numpy()}).groupby('course_id').agg(reporting_starts=('runner','size'),unique_runners=('runner','nunique'),reporting_races=('did','nunique'))
+    donor_pool_audit=donor_pool_audit.join(donor_pool_sizes,on='course_id',validate='many_to_one')
+    assert not joint_data.starts['event_distance_id'].isin(heldout_ids).any()
+    assert donor_pool_audit['reporting_races'].min()>=2
+    assert donor_pool_audit['reporting_starts'].min()>0
+    donor_pool_audit[['reporting_starts','unique_runners','reporting_races']].describe()
+    return (donor_pool_audit,)
+
+
+@app.cell(hide_code=True)
+def donor_sensitivity(
+    SETTINGS,
+    donor_pool_audit,
+    evaluation_truth,
+    heldout_ids,
+    joint_data,
+    joint_trace,
+    mo,
+    mv,
+):
+    donor_diagnostics={}
+    for donor_scope in ['all','course']:
+        for donor_effect,donor_quadrature in [('zero',1),('integrated',8)]:
+            donor_diagnostics[(donor_scope,donor_effect)]=mv.integrated_target_moments(joint_trace.posterior,joint_data,heldout_ids,seed=sum(map(ord,'2.4_dnf_validation:donor_diagnostic:v1')),posterior_draws_per_chain=min(100,SETTINGS['prediction_draws_per_chain']),nodes=128,edition_nodes=donor_quadrature,donor_scope=donor_scope)
+    donor_diagnostic_table=donor_pool_audit.set_index('did').loc[donor_diagnostics[('all','integrated')].did.values].copy()
+    for donor_key,donor_moments in donor_diagnostics.items():
+        donor_diagnostic_table['_'.join(donor_key)]=donor_moments['mean_count'].mean(('chain','draw')).values
+    donor_diagnostic_table['actual']=evaluation_truth.set_index('did').loc[donor_diagnostic_table.index,'n_dnf']
+    donor_diagnostic_table['donor_shift']=donor_diagnostic_table['course_integrated']-donor_diagnostic_table['all_integrated']
+    donor_diagnostic_totals=donor_diagnostic_table[['actual','all_zero','course_zero','all_integrated','course_integrated','donor_shift']].sum().to_frame('total')
+    donor_diagnostic_bands=donor_diagnostic_table.groupby('distance_bin',observed=True)[['actual','all_zero','course_zero','all_integrated','course_integrated','donor_shift']].sum()
+    mo.vstack([donor_diagnostic_totals,donor_diagnostic_bands])
+    return (
+        donor_diagnostic_bands,
+        donor_diagnostic_table,
+        donor_diagnostic_totals,
+    )
+
+
+@app.cell(hide_code=True)
+def donor_numerical_check(
+    SETTINGS,
+    donor_diagnostic_totals,
+    heldout_ids,
+    joint_data,
+    joint_trace,
+    mv,
+    pd,
+):
+    donor_check_moments={}
+    for donor_check_scope in ['all','course']:
+        donor_check_moments[donor_check_scope]=mv.integrated_target_moments(joint_trace.posterior,joint_data,heldout_ids,seed=sum(map(ord,'2.4_dnf_validation:donor_check:v1')),posterior_draws_per_chain=min(100,SETTINGS['prediction_draws_per_chain']),nodes=256,edition_nodes=8,donor_scope=donor_check_scope)
+    donor_check_table=pd.DataFrame({'primary_128':[donor_diagnostic_totals.loc[key+'_integrated','total'] for key in ['all','course']],'check_256':[float(donor_check_moments[key]['mean_count'].mean(('chain','draw')).sum()) for key in ['all','course']]},index=pd.Index(['all','course'],name='pool'))
+    donor_check_table
+    return (donor_check_moments,)
+
+
+@app.cell(hide_code=True)
+def donor_comparison_plot(
+    donor_check_moments,
+    donor_diagnostic_bands,
+    donor_diagnostic_table,
+    plt,
+):
+    donor_check_bands=donor_diagnostic_table[['distance_bin','actual']].copy()
+    for donor_check_pool,donor_check_result in donor_check_moments.items():
+        donor_check_bands[donor_check_pool]=donor_check_result['mean_count'].mean(('chain','draw')).sel(did=donor_check_bands.index.to_numpy()).values
+    donor_check_bands=donor_check_bands.groupby('distance_bin',observed=True)[['actual','all','course']].sum()
+    donor_figure,donor_axis=plt.subplots(figsize=(9,4.5))
+    for donor_plot_pool,donor_plot_color,donor_plot_label in [('all','#264653','All courses'),('course','#2A9D8F','Own course')]:
+        donor_plot_primary=donor_diagnostic_bands.reindex(['42-60','60-90','90-120','120-165'])
+        donor_plot_check=donor_check_bands.reindex(donor_plot_primary.index)
+        donor_axis.plot(donor_plot_primary.index,donor_plot_primary[donor_plot_pool+'_integrated']/donor_plot_primary['actual'],marker='o',color=donor_plot_color,label=donor_plot_label+' (128 donors)')
+        donor_axis.plot(donor_plot_check.index,donor_plot_check[donor_plot_pool]/donor_plot_check['actual'],linestyle='--',color=donor_plot_color,label=donor_plot_label+' (256, second seed)')
+    donor_axis.axhline(1,color='gray',linestyle=':')
+    donor_axis.set(xlabel='Distance band (km)',ylabel='Expected total / actual total',title='Own-course donors reduce long-distance excess, not all bias')
+    donor_axis.legend(ncol=2)
+    donor_figure.tight_layout()
+    donor_figure
+    return
+
+
+@app.cell(hide_code=True)
+def donor_findings(mo):
+    mo.md("""
+    ### Donor findings
+
+    Donor choice explains **part, not all**, of the excess. With 128 donors and the same saved posterior, switching from all-course reporting starts to own-course reporting starts lowers the integrated expected total from **11,422 to 10,833** (actual **9,680**). The second-seed/256-donor check gives **11,315 to 10,813**. That removes approximately **31–34%** of the excess in these diagnostic calculations, not all of it. Every chain gives a negative shift (about −576 to −612 DNFs in the primary calculation).
+
+    The change is concentrated at 120–165 km: **5,819 to 5,160**, compared with **4,622** actual. But the 42–60 km total moves the wrong way, **2,195 to 2,379**, compared with **2,118** actual. Restricting donors is not a uniformly beneficial correction. These totals use numerical integration and are not the original scored predictive totals.
+
+    Fresh-race integration still adds substantial expected counts with own-course donors: **8,469 at zero race effect versus 10,833 after integration**, a 28% increase. Thus the earlier race-effect mechanism is not simply an artifact of the all-course donor pool. Each evaluated course has at least two remaining reporting races and 202 reporting starts; small pools are not empty, but this does not establish their representativeness.
+
+    This is sensitivity to the distribution of latent runner effects, holding visible target finisher demographics fixed. Course-specific starters may still differ from the missing entrants in a given year; repeated-start weighting, selection and posterior course/runner confounding remain relevant. The diagnostics identify two plausible contributors—donor composition and race-effect integration—but do not establish which model change would improve a new holdout. No refit or replacement validation score was produced.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def limitations_heading(mo):
     mo.md("""
     ## Limitations
