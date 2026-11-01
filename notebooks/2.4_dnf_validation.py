@@ -680,6 +680,133 @@ def stability_findings(mo):
 
 
 @app.cell(hide_code=True)
+def bias_heading(mo):
+    mo.md("""
+    ### Count bias and spread
+
+    This is a post-validation diagnostic of the fixed fitted model, not a scored alternative. One-node Gauss–Hermite quadrature evaluates the fresh race effect at zero; eight nodes integrate over its fitted distribution. Both calculations use the same 64 common training-start donors per race and the same posterior draws. Their difference isolates the prediction-stage effect of averaging over fresh race effects conditional on this posterior and donor approximation; it is not the result of refitting without race effects.
+
+    The count transform is nonlinear: averaging `F × p / (1 − p)` is not the same as transforming an averaged probability. We separate that convexity contribution from the probability shift itself. Donor composition and the fitted course/runner levels remain unchanged here.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def bias_decomposition(
+    SEEDS,
+    SETTINGS,
+    evaluation_truth,
+    heldout_ids,
+    integrated_moments,
+    joint_data,
+    joint_trace,
+    mo,
+    mv,
+    targets,
+    xr,
+):
+    zero_race_moments=mv.integrated_target_moments(joint_trace.posterior,joint_data,heldout_ids,seed=SEEDS['prediction'],posterior_draws_per_chain=SETTINGS['prediction_draws_per_chain'],nodes=64,edition_nodes=1)
+    finishers_by_target=xr.DataArray(targets.set_index('did').loc[integrated_moments.did.values,'n_finishers'].to_numpy(),dims='did',coords={'did':integrated_moments.did.values})
+    count_at_averaged_probability=finishers_by_target*integrated_moments['mean_probability']/(1-integrated_moments['mean_probability'])
+    bias_decomposition=targets.set_index('did').loc[integrated_moments.did.values,['distance_bin','finisher_bin','n_finishers']].copy()
+    bias_decomposition['actual']=evaluation_truth.set_index('did').loc[bias_decomposition.index,'n_dnf']
+    bias_decomposition['zero_race_effect']=zero_race_moments['mean_count'].mean(('chain','draw')).values
+    bias_decomposition['average_probability_transform']=count_at_averaged_probability.mean(('chain','draw')).values
+    bias_decomposition['integrated_race_effect']=integrated_moments['mean_count'].mean(('chain','draw')).values
+    bias_decomposition['probability_shift']=bias_decomposition['average_probability_transform']-bias_decomposition['zero_race_effect']
+    bias_decomposition['convexity_uplift']=bias_decomposition['integrated_race_effect']-bias_decomposition['average_probability_transform']
+    bias_decomposition['race_effect_uplift']=bias_decomposition['integrated_race_effect']-bias_decomposition['zero_race_effect']
+    bias_totals=bias_decomposition.select_dtypes('number').drop(columns=['finisher_bin'],errors='ignore').sum().to_frame('total')
+    bias_by_distance=bias_decomposition.groupby('distance_bin',observed=True)[['actual','zero_race_effect','integrated_race_effect','probability_shift','convexity_uplift']].sum()
+    mo.vstack([bias_totals,bias_by_distance])
+    return bias_totals, finishers_by_target
+
+
+@app.cell(hide_code=True)
+def bias_spread(
+    finishers_by_target,
+    joint_predictions,
+    mo,
+    model_scores,
+    mv,
+    pd,
+):
+    predictive_p=mv.target_probability_summary(joint_predictions)
+    conditional_count_mean=finishers_by_target*predictive_p/(1-predictive_p)
+    conditional_count_variance=finishers_by_target*predictive_p/(1-predictive_p)**2
+    spread_components=pd.DataFrame({'did':joint_predictions.did.values,'mean_conditional_count_variance':conditional_count_variance.mean(('chain','draw')).values,'variance_conditional_mean':conditional_count_mean.var(('chain','draw')).values,'empirical_predictive_variance':joint_predictions.var(('chain','draw')).values})
+    spread_totals=spread_components.drop(columns='did').sum().to_frame('sum_of_marginal_variances')
+    spread_totals['fraction_of_total_variance']=spread_totals['sum_of_marginal_variances']/(spread_totals.loc['mean_conditional_count_variance','sum_of_marginal_variances']+spread_totals.loc['variance_conditional_mean','sum_of_marginal_variances'])
+    bias_score_bands=model_scores.groupby(['model','distance_bin'],observed=True).agg(actual=('n_dnf','sum'),predicted=('mean','sum'),mean_bias=('signed_mean_error','mean'),mean_width_94=('width_94','mean'),wis=('wis','mean'))
+    bias_score_sizes=model_scores.groupby(['model','finisher_bin'],observed=True).agg(actual=('n_dnf','sum'),predicted=('mean','sum'),mean_bias=('signed_mean_error','mean'),mean_width_94=('width_94','mean'),wis=('wis','mean'))
+    mo.vstack([spread_totals,bias_score_bands,bias_score_sizes])
+    return bias_score_bands, conditional_count_mean, conditional_count_variance
+
+
+@app.cell(hide_code=True)
+def bias_variance_comparison(
+    baseline_predictions,
+    baseline_trace,
+    conditional_count_mean,
+    conditional_count_variance,
+    finishers_by_target,
+    joint_predictions,
+    np,
+    pd,
+    targets,
+    xr,
+):
+    baseline_diagnostic_post=baseline_trace.posterior.sel(draw=baseline_predictions.draw.values)
+    baseline_target_rows=targets.set_index('did').loc[baseline_predictions.did.values]
+    baseline_course_selector=xr.DataArray(baseline_target_rows['course_id'].to_numpy(),dims='did',coords={'did':baseline_predictions.did.values})
+    baseline_distance=xr.DataArray(np.log(baseline_target_rows['distance_km'].to_numpy()/50),dims='did',coords={'did':baseline_predictions.did.values})
+    baseline_conditional_mu=finishers_by_target*np.exp(baseline_diagnostic_post['intercept']+baseline_diagnostic_post['slope']*baseline_distance+baseline_diagnostic_post['course_effect'].sel(course=baseline_course_selector))
+    baseline_conditional_variance=baseline_conditional_mu+baseline_conditional_mu**2/baseline_diagnostic_post['dispersion']
+    variance_comparison=pd.DataFrame([
+        {'model':'baseline','conditional_count_variance':float(baseline_conditional_variance.mean(('chain','draw')).sum()),'mixing_mean_variance':float(baseline_conditional_mu.var(('chain','draw')).sum()),'empirical_variance':float(baseline_predictions.var(('chain','draw')).sum())},
+        {'model':'joint','conditional_count_variance':float(conditional_count_variance.mean(('chain','draw')).sum()),'mixing_mean_variance':float(conditional_count_mean.var(('chain','draw')).sum()),'empirical_variance':float(joint_predictions.var(('chain','draw')).sum())}])
+    variance_comparison['total_moment_variance']=variance_comparison['conditional_count_variance']+variance_comparison['mixing_mean_variance']
+    variance_comparison
+    return
+
+
+@app.cell(hide_code=True)
+def bias_figure(bias_score_bands, bias_totals, evaluation_truth, plt):
+    bias_figure,bias_axes=plt.subplots(1,2,figsize=(12,4.5))
+    for bias_plot_model,bias_plot_color in [('baseline','#264653'),('joint','#2A9D8F')]:
+        bias_plot_rows=bias_score_bands.loc[bias_plot_model].reindex(['42-60','60-90','90-120','120-165'])
+        bias_axes[0].plot(bias_plot_rows.index,bias_plot_rows['predicted']/bias_plot_rows['actual'],marker='o',label=bias_plot_model,color=bias_plot_color)
+    bias_axes[0].axhline(1,color='gray',linestyle='--')
+    bias_axes[0].set(xlabel='Distance band (km)',ylabel='Predicted total / actual total',title='Overprediction concentrates at long distances')
+    bias_axes[0].legend()
+    bias_axes[1].bar(['Race effect\nset to zero','Transform of\naveraged probability','Average of\ncount transform'],[bias_totals.loc[key,'total'] for key in ['zero_race_effect','average_probability_transform','integrated_race_effect']],color=['#457B9D','#E9C46A','#2A9D8F'])
+    bias_axes[1].axhline(float(evaluation_truth['n_dnf'].sum()),color='black',linestyle='--',label='Actual total')
+    bias_axes[1].set(ylabel='Expected total DNFs',title='Same posterior; diagnostic integration only')
+    bias_axes[1].legend()
+    bias_figure.tight_layout()
+    bias_figure
+    return
+
+
+@app.cell(hide_code=True)
+def bias_findings(mo):
+    mo.md("""
+    ### Bias findings
+
+    Fresh-race integration materially raises the joint model's expected counts. With the same posterior and common donor approximation, setting the new race effect to zero gives **8,823** expected DNFs; integrating it gives **11,291**, an increase of **2,468 (28%)**. About **871** of that increase comes from the shift in averaged DNF probability and **1,597** from the convexity of `p/(1−p)`. Actual held-out DNFs total **9,680**. The integrated diagnostic total differs slightly from the primary predictive total (11,375) because it uses 64 common donors and quadrature rather than the primary 400-donor simulation.
+
+    **The convexity is not an implementation bug.** Averaging conditional count means is the appropriate expectation under this predictive construction. Transforming an averaged probability happens to land near the observed total, but replacing the expectation with that number would be an unjustified change selected against this holdout. Likewise, setting the race effect to zero is not a refit of a no-race-effect model.
+
+    Overprediction is concentrated at longer distances: the joint model predicts **5,788 versus 4,622 actual DNFs at 120–165 km**, and **1,930 versus 1,579 at 90–120 km**. Its aggregate 42–60 km prediction is much closer (2,196 versus 2,118). The joint model has slightly better WIS in the smallest within-distance finisher-count tercile (6.22 versus 6.43), but worse WIS in the middle and largest terciles. These are exploratory subgroup descriptions, not a new selection rule.
+
+    Across races, the sum of marginal predictive variances is approximately **968,000** for the joint model versus **506,000** for the baseline. About **98%** of the joint moment variance comes from variation in conditional means, not the final negative-binomial count draw. This variation includes fresh race effects, posterior uncertainty and donor Monte Carlo variation; the calculation does not separately identify those contributions. These are sums of race-specific variances, **not** variances of the aggregate total, and variance is not identical to central interval width.
+
+    This identifies an important prediction-stage mechanism, not a unique root cause or a validated repair. The next modeling question is whether race-effect variability and the donor-based probabilities jointly calibrate for this reconstruction target, particularly at longer distances. Donor representativeness has not been isolated here. Any revision informed by these errors needs a new predeclared evaluation; the original scores and convergence caveats remain unchanged.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def limitations_heading(mo):
     mo.md("""
     ## Limitations

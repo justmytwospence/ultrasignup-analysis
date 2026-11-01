@@ -219,6 +219,17 @@ Known modeling problems and planned work, grouped by notebook.
   within the explored chains, without certifying convergence or detecting unvisited modes.
   No new sampling, model revision or change to the primary score was made.
 
+- **Prediction-stage bias diagnostic:** holding the fitted posterior and common donor sample
+  fixed, integrating fresh race effects raises expected total DNFs from 8,823 (effect set to
+  zero) to 11,291. Of the 2,468 increase, 871 reflects the probability shift and 1,597 the
+  convexity of `p/(1-p)`. This is a diagnostic quadrature approximation, not a replacement
+  prediction or a refit. Averaging conditional count means is mathematically appropriate;
+  replacing it with a transform of average probability merely because that matches this
+  holdout would be unjustified. Overprediction is concentrated above 90 km. About 98% of
+  joint predictive moment variance comes from varying conditional means (race effects,
+  posterior uncertainty and donor simulation together), rather than final count noise.
+  Investigate race-effect/donor calibration; donor representativeness is not yet isolated.
+
 ### Empirical priors (`utils/empirical_priors.py`)
 
 - **Data leakage** (high priority): priors are computed from the same finisher data the
