@@ -1,0 +1,385 @@
+{
+  "description": "Frozen original notebook builder ASTs evaluated only on deterministic synthetic inputs; no notebook import or fit.",
+  "models": {
+    "reporting": {
+      "source_sha256": "e6a13da7bc7a3ed614778bb3174b4b4f42aa4567c0d55a5120437cebb50f0c33",
+      "original_builder_source": "series_idx, series_ids = pd.factorize(editions['series_id'])\nyears = np.arange(2005, editions['year'].max() + 1)\nyear_idx = (editions['year'].clip(lower=2005) - years[0]).to_numpy()\nlog_distance = editions['log_distance'].to_numpy()\nlog_field = np.log(editions['n_starters'].to_numpy() / 50)\n_n = editions['n_starters'].to_numpy()\n_k = editions['n_dnf'].to_numpy()\n_f = editions['n_finishers'].to_numpy()\n_lists_dns = (editions['n_dns'] > 0).to_numpy()\n_kind = editions['kind'].to_numpy()\n_rep = np.flatnonzero(_kind == 'reports')\n_zero = np.flatnonzero(_kind == 'reports, zero DNFs')\n_unk = np.flatnonzero(_kind == 'unknown')\n\ndef _log_sigmoid(x):\n    return -pt.softplus(-x)\n\ndef _betaln(a, b):\n    return pt.gammaln(a) + pt.gammaln(b) - pt.gammaln(a + b)\n\ndef build_reporting_model(series_effect=True, distance_on_reporting=True):\n    \"\"\"The reporting model; the flags drop terms for the model comparison.\"\"\"\n    with pm.Model(coords={'year': years, 'series': series_ids}) as _model:\n        _year_effect = pm.Normal('year_effect', 0.0, 5.0, dims='year')\n        _logit_r = _year_effect[year_idx]\n        if series_effect:\n            _series_sd = pm.HalfNormal('series_sd', 2.0)\n            _series_raw = pm.Normal('series_raw', 0.0, 1.0, dims='series')\n            _series_effect = pm.Deterministic('series_effect', _series_sd * _series_raw, dims='series')\n            _logit_r = _logit_r + _series_effect[series_idx]\n        if distance_on_reporting:\n            _report_distance = pm.Normal('report_distance', 0.0, 1.0)\n            _logit_r = _logit_r + _report_distance * log_distance\n        _dnf_intercept = pm.Normal('dnf_intercept', -1.5, 1.0)\n        _dnf_distance = pm.Normal('dnf_distance', 0.0, 1.0)\n        _kappa = pm.LogNormal('kappa', np.log(10.0), 1.0)\n        _p = pm.math.invlogit(_dnf_intercept + _dnf_distance * log_distance)\n        _a, _b = (_p * _kappa, (1 - _p) * _kappa)\n        _dns_intercept = pm.Normal('dns_intercept', 0.0, 1.5)\n        _dns_field = pm.Normal('dns_field', 0.0, 1.0)\n        _logit_d = _dns_intercept + _dns_field * log_field\n        _log_r, _log_not_r = (_log_sigmoid(_logit_r), _log_sigmoid(-_logit_r))\n        _log_d, _log_not_d = (_log_sigmoid(_logit_d), _log_sigmoid(-_logit_d))\n        _log_q0 = _betaln(_a, _b + _f) - _betaln(_a, _b)\n        _bb = pm.logp(pm.BetaBinomial.dist(alpha=_a[_rep], beta=_b[_rep], n=_n[_rep]), _k[_rep])\n        pm.Potential('reports', (_log_r[_rep] + _bb + pt.switch(_lists_dns[_rep], _log_d[_rep], _log_not_d[_rep])).sum())\n        pm.Potential('reports_zero', (_log_r[_zero] + _log_q0[_zero] + _log_d[_zero]).sum())\n        pm.Potential('unknown', pm.math.logaddexp(_log_r[_unk] + _log_q0[_unk] + _log_not_d[_unk], _log_not_r[_unk]).sum())\n    return _model",
+      "free_rvs": [
+        "year_effect",
+        "series_sd",
+        "series_raw",
+        "report_distance",
+        "dnf_intercept",
+        "dnf_distance",
+        "kappa",
+        "dns_intercept",
+        "dns_field"
+      ],
+      "value_vars": [
+        "year_effect",
+        "series_sd_log__",
+        "series_raw",
+        "report_distance",
+        "dnf_intercept",
+        "dnf_distance",
+        "kappa_log__",
+        "dns_intercept",
+        "dns_field"
+      ],
+      "points": [
+        {
+          "label": "initial",
+          "point": {
+            "year_effect": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "series_sd_log__": 0.6931471805599453,
+            "series_raw": [
+              0.0,
+              0.0
+            ],
+            "report_distance": 0.0,
+            "dnf_intercept": -1.5,
+            "dnf_distance": 0.0,
+            "kappa_log__": 2.802585092994046,
+            "dns_intercept": 0.0,
+            "dns_field": 0.0
+          },
+          "logp": -32.29191060528251,
+          "gradient": [
+            0.5,
+            0.5,
+            -0.0,
+            -0.0,
+            -0.0,
+            -0.306666838985971,
+            -0.24711699395546816,
+            0.0,
+            0.38666632202805795,
+            0.5057660120890637,
+            0.0655222447256827,
+            0.19219076740810526,
+            -0.31318026257279363,
+            -0.480922742488894,
+            0.7768919164707195,
+            -1.9068448562047733
+          ]
+        },
+        {
+          "label": "perturbed",
+          "point": {
+            "year_effect": [
+              -0.067,
+              -0.04033333333333333,
+              -0.01366666666666667,
+              0.012999999999999994,
+              0.03966666666666667,
+              0.06633333333333333,
+              0.093
+            ],
+            "series_sd_log__": 0.6291471805599453,
+            "series_raw": [
+              -0.061000000000000006,
+              0.099
+            ],
+            "report_distance": -0.05800000000000001,
+            "dnf_intercept": -1.5550000000000002,
+            "dnf_distance": -0.052000000000000005,
+            "kappa_log__": 2.753585092994046,
+            "dns_intercept": -0.046000000000000006,
+            "dns_field": -0.04300000000000001
+          },
+          "logp": -32.32486017667549,
+          "gradient": [
+            0.5479151283326262,
+            0.4721147683056227,
+            0.000546666666666667,
+            -0.0005199999999999998,
+            -0.001586666666666667,
+            -0.29634573665594127,
+            -0.2707875960811577,
+            0.12914367182426345,
+            0.5328966673099612,
+            0.2826439159072208,
+            0.12212946066072568,
+            0.3046563952465499,
+            -0.23251380490743545,
+            -0.4334082628387137,
+            0.7340987240867113,
+            -1.6788765160218757
+          ]
+        }
+      ]
+    },
+    "dnf": {
+      "source_sha256": "306b4729311422d6ac69b797c9e7847d29f24ffe590ac7fbaba62ccf92940de2",
+      "original_builder_source": "_avg = np.eye(2)[runner_gender] / np.bincount(runner_gender, minlength=2)\n_f_half = np.array([-0.5, 0.5])[f_gender]\n_s_half = np.array([-0.5, 0.5])[s_gender]\n_u_rows = np.flatnonzero(unknown[f_edition])\n_u_edition = np.unique(f_edition[_u_rows], return_inverse=True)[1]\n_u_ids = np.flatnonzero(unknown)\n_n_unknown = len(_u_ids)\nunknown_r = np.clip(editions['p_reports_prior'].to_numpy()[_u_ids], 1e-09, 1 - 1e-09)\nunknown_d = np.clip(editions['p_lists_dns'].to_numpy()[_u_ids], 1e-09, 1 - 1e-09)\nunknown_log_r_nodns = np.log(unknown_r) + np.log1p(-unknown_d)\nunknown_log_not_r = np.log1p(-unknown_r)\n\ndef _zero_sum(raw):\n    return raw - pm.math.dot(raw, _avg)[runner_gender]\nall_editions = np.union1d(edition_ids, starts['event_distance_id'].to_numpy())\ns_edition = np.searchsorted(all_editions, starts['event_distance_id'].to_numpy())\nf_edition_all = np.searchsorted(all_editions, edition_ids)[f_edition]\n\ndef build_unobserved_model(unknown='mixture'):\n    \"\"\"2.2's full model plus a term per non-reporting edition: 'mixture' (full) or 'naive' (all report, zero DNFs).\"\"\"\n    with pm.Model(coords={'gender': list(ftm.GENDERS), 'course': courses, 'runner': runners, 'edition': [str(e) for e in all_editions]}) as _model:\n        _pace = pm.Normal('pace_50k_mean', np.log(8.0), 0.3)\n        _pace_gap = pm.Normal('pace_50k_gap', 0.0, 0.2)\n        _exp = pm.Normal('distance_exponent_mean', 0.1, 0.1)\n        _exp_gap = pm.Normal('distance_exponent_gap', 0.0, 0.1)\n        _a1 = pm.Normal('age_linear', 0.0, 0.1, dims='gender')\n        _a2 = pm.Normal('age_quadratic', 0.0, 0.05, dims='gender')\n        _tau = pm.HalfNormal('tau', 0.3)\n        _omega = pm.HalfNormal('omega', 0.3)\n        _sigma = pm.HalfNormal('sigma', 0.3, dims='gender')\n        _course_mean = pm.Normal('course_mean', _pace + _exp * course_x, _tau, dims='course')\n        _u = pm.Deterministic('course_effect', _course_mean - (_pace + _exp * course_x), dims='course')\n        _z1 = _zero_sum(pm.Normal('runner_raw', 0.0, 1.0, dims='runner'))\n        _v = pm.Deterministic('runner_effect', _omega * _z1, dims='runner')\n        _mu = _course_mean[f_course] + _f_half * (_pace_gap + _exp_gap * f_x) + _a1[f_gender] * f_age + _a2[f_gender] * f_age2 + _v[f_runner]\n        pm.Normal('log_pace', _mu, _sigma[f_gender], observed=log_pace)\n        _d0 = pm.Normal('dnf_mean', -1.4, 1.0)\n        _dd = pm.Normal('dnf_distance', 0.0, 1.0)\n        _dg = pm.Normal('dnf_gender_gap', 0.0, 0.5)\n        _da1 = pm.Normal('dnf_age_linear', 0.0, 0.5)\n        _da2 = pm.Normal('dnf_age_quadratic', 0.0, 0.25)\n        _tau_d = pm.HalfNormal('tau_dnf', 1.0)\n        _rho_c = pm.Deterministic('rho_course', 2 * pm.Beta('rho_course_01', 2, 2) - 1)\n        _level = pm.Normal('course_dnf_level', _d0 + _dd * course_x + _tau_d * _rho_c * _u / _tau, _tau_d * pt.sqrt(1 - _rho_c ** 2), dims='course')\n        pm.Deterministic('course_dnf_effect', _level - (_d0 + _dd * course_x), dims='course')\n        _omega_d = pm.HalfNormal('omega_dnf', 1.0)\n        _z2 = _zero_sum(pm.Normal('runner_dnf_raw', 0.0, 1.0, dims='runner'))\n        _rho_r = pm.Deterministic('rho_runner', 2 * pm.Beta('rho_runner_01', 2, 2) - 1)\n        _q = pm.Normal('dnf_runner_pace_quadratic', 0.0, 0.5)\n        _w = pm.Deterministic('runner_dnf_effect', _omega_d * (_rho_r * _z1 + pt.sqrt(1 - _rho_r ** 2) * _z2) + _q * (_z1 ** 2 - 1), dims='runner')\n        _tau_e = pm.HalfNormal('tau_edition', 0.5)\n        _ed = pm.Deterministic('edition_dnf_effect', _tau_e * pm.Normal('edition_raw', 0.0, 1.0, dims='edition'), dims='edition')\n        _eta = _level[s_course] + _s_half * _dg + _da1 * s_age + _da2 * s_age ** 2 + _w[s_runner] + _ed[s_edition]\n        pm.Bernoulli('dnf', logit_p=_eta, observed=dnf)\n        _rows = _u_rows\n        _eta_u = _level[f_course[_rows]] + np.array([-0.5, 0.5])[f_gender[_rows]] * _dg + _da1 * f_age[_rows] + _da2 * f_age2[_rows] + _w[f_runner[_rows]] + _ed[f_edition_all[_rows]]\n        _log_q = pt.inc_subtensor(pt.zeros(_n_unknown)[_u_edition], -pt.softplus(_eta_u))\n        if unknown == 'mixture':\n            pm.Potential('unreported', pm.math.logaddexp(unknown_log_r_nodns + _log_q, unknown_log_not_r).sum())\n        else:\n            pm.Potential('unreported', _log_q.sum())\n    return _model\nFINISH_SCALARS = ['pace_50k_mean', 'pace_50k_gap', 'distance_exponent_mean', 'distance_exponent_gap', 'tau', 'omega', 'sigma']\nDNF_SCALARS = ['dnf_mean', 'dnf_distance', 'dnf_gender_gap', 'dnf_age_linear', 'dnf_age_quadratic', 'tau_dnf', 'omega_dnf', 'rho_course', 'rho_runner', 'dnf_runner_pace_quadratic', 'tau_edition']",
+      "free_rvs": [
+        "pace_50k_mean",
+        "pace_50k_gap",
+        "distance_exponent_mean",
+        "distance_exponent_gap",
+        "age_linear",
+        "age_quadratic",
+        "tau",
+        "omega",
+        "sigma",
+        "course_mean",
+        "runner_raw",
+        "dnf_mean",
+        "dnf_distance",
+        "dnf_gender_gap",
+        "dnf_age_linear",
+        "dnf_age_quadratic",
+        "tau_dnf",
+        "rho_course_01",
+        "course_dnf_level",
+        "omega_dnf",
+        "runner_dnf_raw",
+        "rho_runner_01",
+        "dnf_runner_pace_quadratic",
+        "tau_edition",
+        "edition_raw"
+      ],
+      "value_vars": [
+        "pace_50k_mean",
+        "pace_50k_gap",
+        "distance_exponent_mean",
+        "distance_exponent_gap",
+        "age_linear",
+        "age_quadratic",
+        "tau_log__",
+        "omega_log__",
+        "sigma_log__",
+        "course_mean",
+        "runner_raw",
+        "dnf_mean",
+        "dnf_distance",
+        "dnf_gender_gap",
+        "dnf_age_linear",
+        "dnf_age_quadratic",
+        "tau_dnf_log__",
+        "rho_course_01_logodds__",
+        "course_dnf_level",
+        "omega_dnf_log__",
+        "runner_dnf_raw",
+        "rho_runner_01_logodds__",
+        "dnf_runner_pace_quadratic",
+        "tau_edition_log__",
+        "edition_raw"
+      ],
+      "points": [
+        {
+          "label": "initial",
+          "point": {
+            "pace_50k_mean": 2.0794415416798357,
+            "pace_50k_gap": 0.0,
+            "distance_exponent_mean": 0.1,
+            "distance_exponent_gap": 0.0,
+            "age_linear": [
+              0.0,
+              0.0
+            ],
+            "age_quadratic": [
+              0.0,
+              0.0
+            ],
+            "tau_log__": -1.2039728043259361,
+            "omega_log__": -1.2039728043259361,
+            "sigma_log__": [
+              -1.2039728043259361,
+              -1.2039728043259361
+            ],
+            "course_mean": [
+              2.0794415416798357,
+              2.1487562597358303
+            ],
+            "runner_raw": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "dnf_mean": -1.4,
+            "dnf_distance": 0.0,
+            "dnf_gender_gap": 0.0,
+            "dnf_age_linear": 0.0,
+            "dnf_age_quadratic": 0.0,
+            "tau_dnf_log__": 0.0,
+            "rho_course_01_logodds__": 0.0,
+            "course_dnf_level": [
+              -1.4,
+              -1.4
+            ],
+            "omega_dnf_log__": 0.0,
+            "runner_dnf_raw": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rho_runner_01_logodds__": 0.0,
+            "dnf_runner_pace_quadratic": 0.0,
+            "tau_edition_log__": -0.6931471805599453,
+            "edition_raw": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "logp": -13.65357124219866,
+          "gradient": [
+            -0.0,
+            2.8705041289910533,
+            -0.0,
+            0.625830765383352,
+            0.3585473396531727,
+            2.745448916352661,
+            -0.17927366982658635,
+            2.112762249437533,
+            -2.0,
+            0.0,
+            -2.9528806835191386,
+            -2.2547926196024908,
+            2.5010530160608035,
+            1.6126526335406235,
+            -0.09308070816335261,
+            -0.3464934242141523,
+            0.09308070816335262,
+            0.3464934242141523,
+            0.0,
+            0.0,
+            0.0989080557207091,
+            0.02585827775280871,
+            -0.01953661376459402,
+            -2.0,
+            0.0,
+            0.4319792587651054,
+            0.40655166567574524,
+            0.0,
+            0.3579948146912763,
+            0.5430971295880145,
+            -0.35799481469127636,
+            -0.5430971295880145,
+            0.0,
+            -0.8385309244408505,
+            0.0,
+            0.30218388855858175,
+            -0.19781611144141822,
+            -0.08619425917602903,
+            0.40109194427929085
+          ]
+        },
+        {
+          "label": "perturbed",
+          "point": {
+            "pace_50k_mean": 2.012441541679836,
+            "pace_50k_gap": -0.064,
+            "distance_exponent_mean": 0.039,
+            "distance_exponent_gap": -0.05800000000000001,
+            "age_linear": [
+              -0.05500000000000001,
+              0.105
+            ],
+            "age_quadratic": [
+              -0.052000000000000005,
+              0.108
+            ],
+            "tau_log__": -1.2529728043259363,
+            "omega_log__": -1.2499728043259362,
+            "sigma_log__": [
+              -1.2469728043259363,
+              -1.0869728043259361
+            ],
+            "course_mean": [
+              2.0394415416798357,
+              2.26875625973583
+            ],
+            "runner_raw": [
+              -0.037000000000000005,
+              0.01633333333333333,
+              0.06966666666666667,
+              0.123
+            ],
+            "dnf_mean": -1.434,
+            "dnf_distance": -0.031000000000000007,
+            "dnf_gender_gap": -0.028000000000000004,
+            "dnf_age_linear": -0.02500000000000001,
+            "dnf_age_quadratic": -0.022000000000000006,
+            "tau_dnf_log__": -0.019000000000000003,
+            "rho_course_01_logodds__": -0.016000000000000007,
+            "course_dnf_level": [
+              -1.413,
+              -1.253
+            ],
+            "omega_dnf_log__": -0.010000000000000009,
+            "runner_dnf_raw": [
+              -0.007000000000000006,
+              0.04633333333333333,
+              0.09966666666666667,
+              0.153
+            ],
+            "rho_runner_01_logodds__": -0.0040000000000000036,
+            "dnf_runner_pace_quadratic": -0.0010000000000000009,
+            "tau_edition_log__": -0.6911471805599452,
+            "edition_raw": [
+              0.0049999999999999906,
+              0.05833333333333333,
+              0.11166666666666666,
+              0.16499999999999998
+            ]
+          },
+          "logp": -18.38082984835749,
+          "gradient": [
+            3.8917967997068454,
+            3.8216848766001004,
+            8.051793575522282,
+            6.189047107985873,
+            5.592006941360431,
+            -10.84220946290713,
+            20.876785440589806,
+            -44.104171847123936,
+            -1.252076116095789,
+            0.0494910494927705,
+            -2.4094479738914543,
+            -2.5835980623490067,
+            2.1301242329341097,
+            -6.441746812089702,
+            0.3148709790712657,
+            0.06402542756439816,
+            -0.34753764573793233,
+            -0.20335876089773153,
+            0.2734737567374677,
+            0.18133551978155332,
+            0.23579705851515292,
+            0.11368912107250662,
+            0.3064527137400126,
+            -1.9183214614691546,
+            0.09462975761558645,
+            0.4265323028031369,
+            0.08644802184315359,
+            -0.07845636156517233,
+            0.3689566811090118,
+            0.5147218379157148,
+            -0.4616233477756785,
+            -0.7140551712490482,
+            -0.045325660137633506,
+            -0.7463137675522667,
+            0.03761120484530578,
+            0.3086090200342909,
+            -0.29148539944086244,
+            -0.20026724419181652,
+            0.2201238713276193
+          ]
+        }
+      ]
+    }
+  }
+}

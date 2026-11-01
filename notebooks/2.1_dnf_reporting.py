@@ -63,13 +63,12 @@ def _():
         Path,
         az,
         betaln,
+        data_source,
         datetime,
         expit,
         gammaln,
         hashlib,
-        is_running_race,
         log_expit,
-        data_source,
         np,
         pd,
         plt,
@@ -81,29 +80,10 @@ def _():
 
 
 @app.cell
-def _(is_running_race, data_source, np):
-    # One row per edition (a distance at a dated event) from main.races: public results,
-    # distance format, marathon to 100 miles, running races, not virtual or cancelled.
+def _(data_source):
+    from utils.reporting_model import load_reporting_editions as _load_reporting_editions
     with data_source.connect() as _con:
-        editions = _con.execute("""
-            SELECT did, course_id, series_id, series_name, race_name, year, distance_km,
-                   n_starters, n_finishers, coalesce(n_dnf, 0) AS n_dnf, coalesce(n_dns, 0) AS n_dns,
-                   reports_dnfs
-            FROM races
-            WHERE results_state = 'public' AND race_format = 'distance'
-              AND NOT virtual AND NOT cancelled
-              AND distance_km BETWEEN 42 AND 165
-              AND year IS NOT NULL AND n_starters > 0
-        """).df()
-    editions = editions[editions['race_name'].map(is_running_race)].reset_index(drop=True)
-
-    editions['kind'] = np.select(
-        [editions['n_dnf'] > 0, editions['n_dns'] > 0],
-        ['reports', 'reports, zero DNFs'],
-        default='unknown',
-    )
-    editions['known_reporting'] = editions['kind'] != 'unknown'
-    editions['log_distance'] = np.log(editions['distance_km'] / 50)
+        editions = _load_reporting_editions(_con)
     editions
     return (editions,)
 
@@ -214,7 +194,7 @@ def _(mo):
 
 
 @app.cell
-def _(betaln, editions, expit, gammaln, log_expit, np, pd, pm, pt, xr):
+def _(betaln, editions, expit, gammaln, log_expit, np, pd, pt, xr):
     series_idx, series_ids = pd.factorize(editions['series_id'])
     # Almost nothing reports before 2010, so years before 2005 share one level
     # (2005 stands for '2005 and earlier').
@@ -241,42 +221,8 @@ def _(betaln, editions, expit, gammaln, log_expit, np, pd, pm, pt, xr):
 
 
     def build_reporting_model(series_effect=True, distance_on_reporting=True):
-        """The reporting model; the flags drop terms for the model comparison."""
-        with pm.Model(coords={'year': years, 'series': series_ids}) as _model:
-            # Reporting: a free effect per year (reporting jumps around 2010 rather than
-            # drifting, and every year has hundreds of editions) + series effect + distance slope
-            _year_effect = pm.Normal('year_effect', 0.0, 5.0, dims='year')
-            _logit_r = _year_effect[year_idx]
-            if series_effect:
-                _series_sd = pm.HalfNormal('series_sd', 2.0)
-                _series_raw = pm.Normal('series_raw', 0.0, 1.0, dims='series')
-                _series_effect = pm.Deterministic('series_effect', _series_sd * _series_raw, dims='series')
-                _logit_r = _logit_r + _series_effect[series_idx]
-            if distance_on_reporting:
-                _report_distance = pm.Normal('report_distance', 0.0, 1.0)
-                _logit_r = _logit_r + _report_distance * log_distance
-
-            # DNF rate: beta-binomial on log distance
-            _dnf_intercept = pm.Normal('dnf_intercept', -1.5, 1.0)
-            _dnf_distance = pm.Normal('dnf_distance', 0.0, 1.0)
-            _kappa = pm.LogNormal('kappa', np.log(10.0), 1.0)
-            _p = pm.math.invlogit(_dnf_intercept + _dnf_distance * log_distance)
-            _a, _b = _p * _kappa, (1 - _p) * _kappa
-
-            # Listing DNS rows, given reporting: logit linear in log field size
-            _dns_intercept = pm.Normal('dns_intercept', 0.0, 1.5)
-            _dns_field = pm.Normal('dns_field', 0.0, 1.0)
-            _logit_d = _dns_intercept + _dns_field * log_field
-
-            _log_r, _log_not_r = _log_sigmoid(_logit_r), _log_sigmoid(-_logit_r)
-            _log_d, _log_not_d = _log_sigmoid(_logit_d), _log_sigmoid(-_logit_d)
-            _log_q0 = _betaln(_a, _b + _f) - _betaln(_a, _b)
-
-            _bb = pm.logp(pm.BetaBinomial.dist(alpha=_a[_rep], beta=_b[_rep], n=_n[_rep]), _k[_rep])
-            pm.Potential('reports', (_log_r[_rep] + _bb + pt.switch(_lists_dns[_rep], _log_d[_rep], _log_not_d[_rep])).sum())
-            pm.Potential('reports_zero', (_log_r[_zero] + _log_q0[_zero] + _log_d[_zero]).sum())
-            pm.Potential('unknown', pm.math.logaddexp(_log_r[_unk] + _log_q0[_unk] + _log_not_d[_unk], _log_not_r[_unk]).sum())
-        return _model
+        from utils.reporting_model import build_reporting_model as _shared_builder
+        return _shared_builder(editions, series_effect=series_effect, distance_on_reporting=distance_on_reporting)
 
 
     def edition_loglik(posterior):

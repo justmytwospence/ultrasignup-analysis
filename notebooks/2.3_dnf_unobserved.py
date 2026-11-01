@@ -71,12 +71,18 @@ def _():
     # Which 0.1 core to fit: 'core' is the dev core (3, 840), 28 courses, minutes;
     # 'core_3_500' is the final-fit core, 172 courses, hours (fewer draws to bound memory).
     CORE = 'core_3_500'
-    DRAWS = 1000 if CORE == 'core' else 500
+    # Longer large-core run after the 500-draw pilot showed slow course/edition mixing.
+    # 1500 retained draws fit the 64 GB machine's guarded memory budget.
+    DRAWS = 1000 if CORE == 'core' else 1500
+    TUNE = 1000 if CORE == 'core' else 2000
+    TARGET_ACCEPT = 0.9
     return (
         CACHE,
         CORE,
         DRAWS,
         OUT,
+        TARGET_ACCEPT,
+        TUNE,
         az,
         check_memory,
         compare_table,
@@ -92,7 +98,6 @@ def _():
         plt,
         pm,
         process_results,
-        pt,
         pytensor,
         sample_lean,
         shutil,
@@ -214,11 +219,9 @@ def _(
     f_gender,
     f_runner,
     f_x,
-    ftm,
     log_pace,
     np,
     pm,
-    pt,
     runner_gender,
     runners,
     s_age,
@@ -254,56 +257,9 @@ def _(
 
 
     def build_unobserved_model(unknown='mixture'):
-        """2.2's full model plus a term per non-reporting edition: 'mixture' (full) or 'naive' (all report, zero DNFs)."""
-        with pm.Model(coords={'gender': list(ftm.GENDERS), 'course': courses, 'runner': runners, 'edition': [str(e) for e in all_editions]}) as _model:
-            _pace = pm.Normal('pace_50k_mean', np.log(8.0), 0.3)
-            _pace_gap = pm.Normal('pace_50k_gap', 0.0, 0.2)
-            _exp = pm.Normal('distance_exponent_mean', 0.1, 0.1)
-            _exp_gap = pm.Normal('distance_exponent_gap', 0.0, 0.1)
-            _a1 = pm.Normal('age_linear', 0.0, 0.1, dims='gender')
-            _a2 = pm.Normal('age_quadratic', 0.0, 0.05, dims='gender')
-            _tau = pm.HalfNormal('tau', 0.3)
-            _omega = pm.HalfNormal('omega', 0.3)
-            _sigma = pm.HalfNormal('sigma', 0.3, dims='gender')
-            _course_mean = pm.Normal('course_mean', _pace + _exp * course_x, _tau, dims='course')
-            _u = pm.Deterministic('course_effect', _course_mean - (_pace + _exp * course_x), dims='course')
-            _z1 = _zero_sum(pm.Normal('runner_raw', 0.0, 1.0, dims='runner'))
-            _v = pm.Deterministic('runner_effect', _omega * _z1, dims='runner')
-            _mu = (_course_mean[f_course] + _f_half * (_pace_gap + _exp_gap * f_x)
-                   + _a1[f_gender] * f_age + _a2[f_gender] * f_age2 + _v[f_runner])
-            pm.Normal('log_pace', _mu, _sigma[f_gender], observed=log_pace)
-
-            _d0 = pm.Normal('dnf_mean', -1.4, 1.0)
-            _dd = pm.Normal('dnf_distance', 0.0, 1.0)
-            _dg = pm.Normal('dnf_gender_gap', 0.0, 0.5)
-            _da1 = pm.Normal('dnf_age_linear', 0.0, 0.5)
-            _da2 = pm.Normal('dnf_age_quadratic', 0.0, 0.25)
-            _tau_d = pm.HalfNormal('tau_dnf', 1.0)
-            _rho_c = pm.Deterministic('rho_course', 2 * pm.Beta('rho_course_01', 2, 2) - 1)
-            _level = pm.Normal('course_dnf_level', _d0 + _dd * course_x + _tau_d * _rho_c * _u / _tau,
-                               _tau_d * pt.sqrt(1 - _rho_c**2), dims='course')
-            pm.Deterministic('course_dnf_effect', _level - (_d0 + _dd * course_x), dims='course')
-            _omega_d = pm.HalfNormal('omega_dnf', 1.0)
-            _z2 = _zero_sum(pm.Normal('runner_dnf_raw', 0.0, 1.0, dims='runner'))
-            _rho_r = pm.Deterministic('rho_runner', 2 * pm.Beta('rho_runner_01', 2, 2) - 1)
-            _q = pm.Normal('dnf_runner_pace_quadratic', 0.0, 0.5)
-            _w = pm.Deterministic('runner_dnf_effect', _omega_d * (_rho_r * _z1 + pt.sqrt(1 - _rho_r**2) * _z2) + _q * (_z1**2 - 1), dims='runner')
-            # edition effect: a hot year, a reroute or a cutoff change moves every starter's DNF odds together
-            _tau_e = pm.HalfNormal('tau_edition', 0.5)
-            _ed = pm.Deterministic('edition_dnf_effect', _tau_e * pm.Normal('edition_raw', 0.0, 1.0, dims='edition'), dims='edition')
-            _eta = _level[s_course] + _s_half * _dg + _da1 * s_age + _da2 * s_age**2 + _w[s_runner] + _ed[s_edition]
-            pm.Bernoulli('dnf', logit_p=_eta, observed=dnf)
-
-            # non-reporting editions: log q_e = sum over finishers of log(1 - p_i)
-            _rows = _u_rows
-            _eta_u = (_level[f_course[_rows]] + np.array([-0.5, 0.5])[f_gender[_rows]] * _dg
-                      + _da1 * f_age[_rows] + _da2 * f_age2[_rows] + _w[f_runner[_rows]] + _ed[f_edition_all[_rows]])
-            _log_q = pt.inc_subtensor(pt.zeros(_n_unknown)[_u_edition], -pt.softplus(_eta_u))
-            if unknown == 'mixture':
-                pm.Potential('unreported', pm.math.logaddexp(unknown_log_r_nodns + _log_q, unknown_log_not_r).sum())
-            else:
-                pm.Potential('unreported', _log_q.sum())
-        return _model
+        from utils.dnf_model import DNFInputs, build_unobserved_model as shared_builder
+        data = DNFInputs(courses=courses, runners=runners, course_x=course_x, runner_gender=runner_gender, log_pace=log_pace, f_course=f_course, f_runner=f_runner, f_gender=f_gender, f_x=f_x, f_age=f_age, f_age2=f_age2, edition_ids=edition_ids, f_edition=f_edition, s_course=s_course, s_runner=s_runner, s_gender=s_gender, s_age=s_age, dnf=dnf, starts=starts, editions=editions, unknown=(~editions['reports_dnfs']).to_numpy())
+        return shared_builder(data, unknown=unknown)
 
 
     FINISH_SCALARS = ['pace_50k_mean', 'pace_50k_gap', 'distance_exponent_mean', 'distance_exponent_gap', 'tau', 'omega', 'sigma']
@@ -374,7 +330,7 @@ def _(mo):
     mo.md(r"""
     ### Prior predictive check
 
-    The priors are 2.2's and the new term has no parameters of its own, so the check that matters is what the priors imply for the quantity this notebook predicts: the share of starters who DNF, as a random starter's DNF probability across editions, against the observed DNF rate of reporting editions (red).
+    The model retains 2.2's priors and adds a HalfNormal(0.5) prior on the race-year DNF logit standard deviation. This check examines what the priors imply for the quantity this notebook predicts: the share of starters who DNF, as a random starter's DNF probability across editions, against the observed DNF rate of reporting editions (red).
     """)
     return
 
@@ -412,6 +368,8 @@ def _(
     DRAWS,
     FINISH_SCALARS,
     OUT,
+    TARGET_ACCEPT,
+    TUNE,
     az,
     check_memory,
     datetime,
@@ -433,39 +391,14 @@ def _(
     unknown_d,
     unknown_r,
     unobserved_model,
-    xr,
 ):
     _key = hashlib.sha1(b''.join(np.ascontiguousarray(a).tobytes() for a in (log_pace, f_course, f_runner, dnf, s_course, s_runner, s_age, unknown_r, unknown_d))).hexdigest()[:12]
     _PER_RUNNER = ('runner_effect', 'runner_dnf_effect')
 
 
     def _derive_runner_effects(post):
-        """Per-runner effects from the stored raw effects and scalars, as float32, one chain at a
-        time (they are left out of sampling to keep its memory small). Mirrors the model."""
-        _avg = np.eye(2)[runner_gender] / np.bincount(runner_gender, minlength=2)
-
-        def _zero_sum(raw):
-            return raw - (raw @ _avg)[..., runner_gender]
-
-        _out = {}
-        _z1 = np.stack([_zero_sum(post['runner_raw'].values[c]).astype(np.float32) for c in range(post.sizes['chain'])])
-        _sc = lambda v: post[v].values[..., None].astype(np.float32)
-        _out['runner_effect'] = _sc('omega') * _z1
-        if 'runner_dnf_raw' in post:
-            _z2 = np.stack([_zero_sum(post['runner_dnf_raw'].values[c]).astype(np.float32) for c in range(post.sizes['chain'])])
-            if 'rho_runner' in post:
-                _r = _sc('rho_runner')
-                _w = _sc('omega_dnf') * (_r * _z1 + np.sqrt(1 - _r**2) * _z2)
-                if 'dnf_runner_pace_quadratic' in post:
-                    _w = _w + _sc('dnf_runner_pace_quadratic') * (_z1**2 - 1)
-            else:
-                _w = _sc('omega_dnf') * _z2
-            _out['runner_dnf_effect'] = _w
-        _dims = ('chain', 'draw', 'runner')
-        _post = post.drop_vars([v for v in ('runner_raw', 'runner_dnf_raw') if v in post])
-        for _k, _v in _out.items():
-            _post[_k] = xr.DataArray(_v, dims=_dims, coords={'chain': post['chain'], 'draw': post['draw'], 'runner': post['runner']})
-        return _post
+        from utils.dnf_model import derive_runner_effects
+        return derive_runner_effects(post, runner_gender)
 
 
     # Bump when the model changes, so a cached trace is never reused for a different model.
@@ -473,17 +406,17 @@ def _(
 
 
     def fit_unobserved(model, label, minutes):
-        """Sample `model` with nutpie, or load its cached trace (keyed by label, model version and data)."""
-        _path = OUT / f'unobserved_{label}_v{_MODEL_VERSION}_{_key}.nc'
+        """Sample `model` with nutpie, or load its cached trace (keyed by label, model version, data and sampling settings)."""
+        _path = OUT / f'unobserved_{label}_v{_MODEL_VERSION}_{_key}_d{DRAWS}_t{TUNE}_a{TARGET_ACCEPT:g}.nc'
         if _path.exists():
             return az.from_netcdf(_path)
         _store = _path.with_suffix('.zarr')  # draws stream here, not into memory
         _trace = load_store(_store, DRAWS)    # a finished store whose save failed: no need to resample
         if _trace is None:
             _keep = [v.name for v in model.free_RVs + model.deterministics if v.name not in _PER_RUNNER]
-            _gb = check_memory(model, _keep, chains=4, draws=DRAWS, on_disk=True)
-            mo.output.replace(mo.callout(mo.md(f"Sampling the {label} model since {datetime.now():%H:%M} (about {minutes} minutes, about {_gb:.0f} GB)."), kind='info'))
-            _trace = sample_lean(model, _keep, draws=DRAWS, random_seed=42, progressbar=True, store_dir=_store)
+            _gb = check_memory(model, _keep, chains=4, draws=DRAWS, tune=TUNE, on_disk=True)
+            mo.output.replace(mo.callout(mo.md(f"Sampling the {label} model since {datetime.now():%H:%M} ({DRAWS} draws/chain after {TUNE} warm-up; allow several hours on the large core, about {_gb:.0f} GB)."), kind='info'))
+            _trace = sample_lean(model, _keep, draws=DRAWS, tune=TUNE, target_accept=TARGET_ACCEPT, random_seed=42, progressbar=True, store_dir=_store)
         _post = _derive_runner_effects(_trace.posterior)
         _trace = az.InferenceData(posterior=_post, sample_stats=_trace.sample_stats)
         # write then rename, so a failed save never leaves a file that looks like a cached trace
@@ -523,18 +456,52 @@ def _(DNF_SCALARS, az, np, unobserved_trace):
 
 
 @app.cell(hide_code=True)
+def _(DNF_SCALARS, FINISH_SCALARS, az, pd, unobserved_trace):
+    diagnostic_rows = []
+    for parameter in FINISH_SCALARS + DNF_SCALARS + ['course_mean', 'course_dnf_level', 'edition_dnf_effect', 'runner_effect', 'runner_dnf_effect']:
+        diagnostic_values = az.summary(unobserved_trace, var_names=[parameter], kind='diagnostics', round_to='none')
+        diagnostic_rows.append({'parameter': parameter, 'max_rhat': diagnostic_values['r_hat'].max(), 'min_bulk_ess': diagnostic_values['ess_bulk'].min(), 'min_tail_ess': diagnostic_values['ess_tail'].min(), 'coordinates_rhat_over_1_01': int((diagnostic_values['r_hat'] > 1.01).sum()), 'coordinates_bulk_ess_under_400': int((diagnostic_values['ess_bulk'] < 400).sum())})
+    convergence_checks = pd.DataFrame(diagnostic_rows).set_index('parameter')
+    convergence_checks
+
+    return (convergence_checks,)
+
+
+@app.cell(hide_code=True)
+def _(az, courses, edition_ids, editions, unobserved_trace, xr):
+    # The likelihood sees the sum, so diagnose it separately from its course/year split.
+    edition_course_index = courses.searchsorted(editions['course_id'].to_numpy())
+    edition_baseline = unobserved_trace.posterior['course_dnf_level'].isel(course=xr.DataArray(edition_course_index, dims='checked_edition')).drop_vars('course')
+    edition_baseline = edition_baseline + unobserved_trace.posterior['edition_dnf_effect'].sel(edition=[str(e) for e in edition_ids]).rename(edition='checked_edition').assign_coords(checked_edition=edition_baseline.checked_edition)
+    edition_baseline_checks = az.summary(edition_baseline.to_dataset(name='course_plus_year'), kind='diagnostics', round_to='none')
+    edition_baseline_checks.sort_values('ess_bulk').head(10)
+
+    return (edition_baseline_checks,)
+
+
+@app.cell(hide_code=True)
+def _(convergence_checks, edition_baseline_checks, mo):
+    mo.md(f"""
+    The extended fit has no divergences or tree-depth hits. Population and runner effects pass the R-hat screen, but {int(convergence_checks.loc['course_dnf_level', 'coordinates_rhat_over_1_01'])} course and {int(convergence_checks.loc['edition_dnf_effect', 'coordinates_rhat_over_1_01'])} race-year coordinates exceed 1.01. The worst course R-hat is {convergence_checks.loc['course_dnf_level', 'max_rhat']:.3f}; standalone course DNF rankings need further work.
+
+    The **combined course-plus-year logits** are substantially better identified computationally: maximum R-hat {edition_baseline_checks.r_hat.max():.4f}, minimum bulk ESS {edition_baseline_checks.ess_bulk.min():.0f}. This supports the fitted race-year baseline estimates, not a blanket convergence claim for every parameter or validation of new-year predictions.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## Posterior predictive checks
 
-    The hidden-DNF prediction is checked where the answer is known: for every reporting edition from 2010 on, predict its DNF count from its finishers alone (the way hidden DNFs are predicted) and compare with the DNFs it posted. Left: predicted against posted DNFs per edition (94% predictive interval). Right: the share of editions whose posted count falls inside the 50% and 94% predictive intervals, which should be about 0.5 and 0.94; without edition effects, expect too few inside.
+    The hidden-DNF prediction is checked where the answer is known: for every reporting edition from 2010 on, predict its DNF count using its finisher count and composition, with a fresh race-year effect (the way hidden DNFs are predicted) and compare with the DNFs it posted. Left: predicted against posted DNFs per edition (94% predictive interval). Right: the share of editions whose posted count falls inside the 50% and 94% predictive intervals, which should be about 0.5 and 0.94; without edition effects, expect too few inside. This is an in-sample model check, not held-out validation: the course and population effects were learned using these same DNF outcomes. Discrete counts and only 100 predictive replicates also limit coverage precision.
     """)
     return
 
 
 @app.cell
 def _(editions, np, pd, starter_dnf_prob, unknown, unobserved_trace):
-    _sub = unobserved_trace.posterior.isel(draw=slice(None, None, 20))
+    _sub = unobserved_trace.posterior.isel(draw=slice(None, None, max(1, unobserved_trace.posterior.sizes['draw'] // 25)))
     starter_p = starter_dnf_prob(_sub)
     _rng = np.random.default_rng(11)
     _f = editions['n_finishers'].to_numpy()
@@ -575,11 +542,24 @@ def _(dnf_count_check, plt):
 
 
 @app.cell(hide_code=True)
+def _(course_x, dnf_count_check, editions, np, pd, unknown):
+    coverage_by_edition = editions.loc[(~unknown) & (editions['year'].to_numpy() >= 2010), ['course_idx', 'n_finishers']].reset_index(drop=True)
+    coverage_by_edition['distance_band'] = pd.cut(50 * np.exp(course_x[coverage_by_edition['course_idx']]), bins=[0, 60, 90, 120, np.inf], labels=['42–60 km', '60–90 km', '90–120 km', '>120 km'])
+    coverage_by_edition['field_size'] = pd.qcut(coverage_by_edition['n_finishers'], 4, duplicates='drop')
+    coverage_by_edition['covered_50'] = dnf_count_check['posted'].between(dnf_count_check['lo50'], dnf_count_check['hi50'])
+    coverage_by_edition['covered_94'] = dnf_count_check['posted'].between(dnf_count_check['lo94'], dnf_count_check['hi94'])
+    conditional_coverage = pd.concat({group: coverage_by_edition.groupby(group, observed=True).agg(race_years=('covered_94', 'size'), coverage_50=('covered_50', 'mean'), coverage_94=('covered_94', 'mean')) for group in ['distance_band', 'field_size']})
+    conditional_coverage
+
+    return
+
+
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## Model comparison
 
-    PSIS-LOO over every DNF observation (each start in a reporting edition, and each non-reporting edition's term), for the mixture model against the naive one that takes every silent edition as reporting zero DNFs. Both models assign a probability to the same observed events, so their scores are comparable. 500 draws per model.
+    PSIS-LOO over every DNF observation (each start in a reporting edition, and each non-reporting edition's term), for the mixture model against the naive one that takes every silent edition as reporting zero DNFs. Both models assign a probability to the same observed events, so their scores are comparable. At most roughly 260 posterior draws per model are used here to bound memory. On the large core only the mixture model is fitted, so this is not a model comparison. High or nonfinite Pareto k values make many pointwise estimates unreliable; the finite replacement for degenerate terms does not resolve that limitation.
 
     On a final-fit core (`CORE` other than `'core'`) only the full model is fitted, so this table has one row; the comparison is the dev core's.
     """)
@@ -617,7 +597,7 @@ def _(
     xr,
 ):
     def _with_loglik(trace, naive):
-        _post = trace.posterior.isel(draw=slice(None, None, 8))
+        _post = trace.posterior.isel(draw=slice(None, None, max(1, trace.posterior.sizes['draw'] // 63)))
         _eta = (flat_draws(_post, 'course_dnf_level')[:, s_course] + np.array([-0.5, 0.5])[s_gender] * flat_draws(_post, 'dnf_gender_gap')[:, None]
                 + flat_draws(_post, 'dnf_age_linear')[:, None] * s_age + flat_draws(_post, 'dnf_age_quadratic')[:, None] * s_age**2
                 + flat_draws(_post, 'runner_dnf_effect')[:, s_runner] + flat_draws(_post, 'edition_dnf_effect')[:, s_edition])
@@ -680,7 +660,7 @@ def _(
     _scalars = FINISH_SCALARS + DNF_SCALARS
     _chosen = ['pace_50k_mean', 'pace_50k_gap', 'distance_exponent_mean', 'distance_exponent_gap', 'age_linear', 'age_quadratic',
                'tau', 'omega', 'sigma', 'dnf_mean', 'dnf_distance', 'dnf_gender_gap', 'dnf_age_linear', 'dnf_age_quadratic',
-               'tau_dnf', 'omega_dnf', 'rho_course_01', 'rho_runner_01', 'dnf_runner_pace_quadratic']
+               'tau_dnf', 'omega_dnf', 'tau_edition', 'rho_course_01', 'rho_runner_01', 'dnf_runner_pace_quadratic']
     # Log density of each chosen prior at the posterior draws (each has fixed parameters, so it is
     # evaluated on its own; the stored trace drops the raw runner effects compute_log_prior needs).
     _log_prior = {}
@@ -728,7 +708,7 @@ def _(
     unknown_terms,
     unobserved_trace,
 ):
-    _sub = unobserved_trace.posterior.isel(draw=slice(None, None, 20))
+    _sub = unobserved_trace.posterior.isel(draw=slice(None, None, max(1, unobserved_trace.posterior.sizes['draw'] // 25)))
     _log_q, _term = unknown_terms(_sub)
     _p_rep = np.exp(unknown_log_r_nodns + _log_q - _term)  # P(reports | no DNF rows), per draw
     _p_rep_mean = _p_rep.mean(0)
@@ -791,8 +771,9 @@ def _(mo):
 @app.cell
 def _(CACHE, DNF_SCALARS, az, pd, unobserved_summary):
     _t22 = az.from_netcdf(max((CACHE / '2.2_dnf_observed').glob('dnf_quadratic_v1_*.nc'), key=lambda p: p.stat().st_mtime))  # the most recent 2.2 fit
-    _a = az.summary(_t22, var_names=DNF_SCALARS, round_to=3)[['mean', 'hdi_3%', 'hdi_97%']].add_prefix('2.2 ')
-    _b = unobserved_summary.loc[DNF_SCALARS, ['mean', 'hdi_3%', 'hdi_97%']].round(3).add_prefix('2.3 ')
+    _shared = [v for v in DNF_SCALARS if v in _t22.posterior]
+    _a = az.summary(_t22, var_names=_shared, round_to=3)[['mean', 'hdi_3%', 'hdi_97%']].add_prefix('2.2 ')
+    _b = unobserved_summary.loc[_shared, ['mean', 'hdi_3%', 'hdi_97%']].round(3).add_prefix('2.3 ')
     pd.concat([_a, _b], axis=1)
     return
 
