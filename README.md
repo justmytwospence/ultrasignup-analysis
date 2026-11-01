@@ -211,6 +211,14 @@ Known modeling problems and planned work, grouped by notebook.
   nonreporting races, validate core selection, or count runners excluded by cleaning. It is
   not an untouched external test. Do not retune against this holdout and relabel it validation.
 
+- **Saved-draw stability check:** all 16 cross-model chain comparisons favor the baseline
+  (+0.69 to +0.95 WIS); early/late halves give +0.80/+0.79. The 13 targets failing integrated
+  mean mixing screens account for about 15% of the summed difference; excluding them from
+  both models leaves +0.70. Within-chain block bootstraps (25/50 saved draws, 200 replicates
+  each) give Monte Carlo SD about 0.038 WIS. This supports the practical baseline preference
+  within the explored chains, without certifying convergence or detecting unvisited modes.
+  No new sampling, model revision or change to the primary score was made.
+
 ### Empirical priors (`utils/empirical_priors.py`)
 
 - **Data leakage** (high priority): priors are computed from the same finisher data the

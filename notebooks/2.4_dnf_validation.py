@@ -81,6 +81,7 @@ def configuration(mo):
         pm,
         process_results,
         sample_lean,
+        xr,
     )
 
 
@@ -488,7 +489,7 @@ def heldout_scores(
     mv.atomic_write_frame(OUT/'scores_prediction_check.parquet',check_scores)
     mv.atomic_write_frame(OUT/'total_count_check.parquet',total_count_check)
     mo.vstack([mo.callout('SMOKE ONLY: short fits and few predictive draws; do not interpret scores.',kind='warn') if SMOKE else mo.md('Actual held-out evaluation of the frozen specification.'),score_tables['comparison'],score_tables['overall'],prediction_stability,total_count_check])
-    return (score_tables,)
+    return evaluation_truth, model_scores, score_tables
 
 
 @app.cell(hide_code=True)
@@ -573,6 +574,107 @@ def validation_findings(mo):
     There were no retained-sample divergences or tree-depth hits. Nevertheless, five course and 30 race-effect coordinates exceed R-hat 1.01. Fresh-effect-integrated predictive means also show imperfect mixing (maximum R-hat 1.026, minimum bulk ESS 329). Treat the apparent baseline advantage as **provisional**, not as a conclusive ranking. No retuning or additional fit was selected after inspecting these outcomes.
 
     The 4h14m full pipeline evaluates 263 races across 114 courses within the fixed 172-course convenience sample. Counts are filtered by the existing cleaning rules. This is historical reconstruction of known nonreporters, not reporting classification, forecasting, validation of core selection, or proof of transportability to naturally silent races. The dataset already informed model development; it is not a pristine external test.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def stability_heading(mo):
+    mo.md("""
+    ### Numerical stability
+
+    These post-fit diagnostics keep the frozen score and holdout unchanged. Chain and early/late comparisons use fewer predictive draws, so their WIS values also reflect finite-quantile noise. Chain numbers across models are arbitrary, not paired MCMC trajectories. The block bootstrap resamples contiguous saved-prediction positions independently within each model and chain, using the same draw indices across all races to retain their dependence. Its variation is conditional on the sampled chains; it cannot detect an unvisited mode or replace convergence diagnostics. It does not resample races and is distinct from the course-clustered evaluation interval.
+
+    Excluding poorly mixing targets below is an influence diagnostic only, not a replacement primary score.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def stability_subsets(
+    SETTINGS,
+    baseline_predictions,
+    evaluation_truth,
+    integrated_diagnostics,
+    joint_predictions,
+    mo,
+    model_scores,
+    mv,
+    np,
+    pd,
+    targets,
+):
+    def prediction_wis(prediction):
+        return float(mv.score_predictions(prediction,evaluation_truth,targets)['wis'].mean())
+
+    chain_score_rows=[]
+    for stability_model, stability_predictions in [('baseline',baseline_predictions),('joint',joint_predictions)]:
+        for stability_chain in range(stability_predictions.sizes['chain']):
+            chain_score_rows.append({'model':stability_model,'chain':stability_chain,'wis':prediction_wis(stability_predictions.isel(chain=[stability_chain]))})
+    chain_scores=pd.DataFrame(chain_score_rows)
+    chain_cross_differences = (chain_scores.query("model == 'joint'")['wis'].to_numpy()[:,None] - chain_scores.query("model == 'baseline'")['wis'].to_numpy()[None,:])
+    segment_rows=[]
+    for segment_name, segment_slice in [('early',slice(0,SETTINGS['prediction_draws_per_chain']//2)),('late',slice(SETTINGS['prediction_draws_per_chain']//2,None))]:
+        segment_base=prediction_wis(baseline_predictions.isel(draw=segment_slice))
+        segment_joint=prediction_wis(joint_predictions.isel(draw=segment_slice))
+        segment_rows.append({'segment':segment_name,'baseline_wis':segment_base,'joint_wis':segment_joint,'difference':segment_joint-segment_base})
+    segment_scores=pd.DataFrame(segment_rows)
+    flagged_rows=integrated_diagnostics.loc[(integrated_diagnostics['r_hat']>1.01)|(integrated_diagnostics['ess_bulk']<400)|(integrated_diagnostics['ess_tail']<400)]
+    flagged_ids=set(flagged_rows.index.str.extract(r'\[(\d+)\]',expand=False).astype(int))
+    race_wis_difference=model_scores.pivot(index='did',columns='model',values='wis').eval('joint - baseline')
+    influence_rows=[]
+    for influence_name,influence_mask in [('all',np.ones(len(race_wis_difference),dtype=bool)),('flagged',race_wis_difference.index.isin(flagged_ids)),('unflagged',~race_wis_difference.index.isin(flagged_ids))]:
+        influence_values=race_wis_difference[influence_mask]
+        influence_rows.append({'targets':influence_name,'n_races':len(influence_values),'mean_difference':influence_values.mean(),'sum_difference':influence_values.sum()})
+    influence_table=pd.DataFrame(influence_rows)
+    mo.vstack([chain_scores,segment_scores,influence_table])
+    return (prediction_wis,)
+
+
+@app.cell(hide_code=True)
+def stability_monte_carlo(
+    baseline_predictions,
+    joint_predictions,
+    np,
+    pd,
+    prediction_wis,
+    xr,
+):
+    def block_resampled_prediction(prediction,rng,block_length):
+        values=prediction.transpose('chain','draw','did').values
+        n_chains,n_draws,n_targets=values.shape
+        resampled=np.empty_like(values)
+        for chain in range(n_chains):
+            starts=rng.integers(0,n_draws,size=int(np.ceil(n_draws/block_length)))
+            indices=((starts[:,None]+np.arange(block_length))%n_draws).ravel()[:n_draws]
+            resampled[chain]=values[chain,indices,:]
+        return xr.DataArray(resampled,dims=('chain','draw','did'),coords={'chain':np.arange(n_chains),'draw':np.arange(n_draws),'did':prediction.did.values},attrs={'model':prediction.attrs['model']})
+
+    mc_rng=np.random.default_rng(sum(map(ord,'2.4_dnf_validation:mc_stability:v1')))
+    mc_rows=[]
+    for mc_block in [25,50]:
+        for mc_replicate in range(200):
+            mc_baseline=prediction_wis(block_resampled_prediction(baseline_predictions,mc_rng,mc_block))
+            mc_joint=prediction_wis(block_resampled_prediction(joint_predictions,mc_rng,mc_block))
+            mc_rows.append({'block_length':mc_block,'replicate':mc_replicate,'difference':mc_joint-mc_baseline})
+    mc_replicates=pd.DataFrame(mc_rows)
+    mc_summary=mc_replicates.groupby('block_length')['difference'].agg(mean='mean',bootstrap_sd='std',lower_94=lambda x:x.quantile(.03),upper_94=lambda x:x.quantile(.97),minimum='min')
+    mc_summary
+    return
+
+
+@app.cell(hide_code=True)
+def stability_findings(mo):
+    mo.md("""
+    ### Stability findings
+
+    The baseline advantage is stable within the saved chains. Every one of the 16 cross-model chain comparisons favors the baseline, with joint-minus-baseline WIS from **+0.69 to +0.95**. Early and late halves give **+0.80 and +0.79**.
+
+    Thirteen targets fail the integrated-mean R-hat/ESS screens. They contribute about **15%** of the summed WIS difference. Excluding those same races from both models leaves **+0.70** across the other 250 races, so they do not explain the overall baseline advantage. This exclusion is diagnostic only; the primary score remains +0.79 on all 263 races.
+
+    Within-chain circular block bootstraps with block lengths 25 and 50 saved draws give a Monte Carlo standard deviation of approximately **0.038 WIS**, far smaller than the observed +0.79 gap. Their descriptive central 94% ranges are approximately **[+0.73, +0.86]** and **[+0.72, +0.86]**. These are conditional resampling ranges, not evaluation intervals, posterior credible intervals, or a bound on bias from poor mixing. The bootstrap cannot reveal an unvisited mode; no chains or observations are removed from the primary estimate.
+
+    There is no numerical indication here that a longer fit is needed merely to decide which method to prefer on this holdout. Retain the convergence warning for individual predictions and course effects. No new posterior or predictive draws were generated, and neither model nor the holdout was changed.
     """)
     return
 
