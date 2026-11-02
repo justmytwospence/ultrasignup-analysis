@@ -98,7 +98,7 @@ con = data_source.connect(local=True)          # offline, or to pin a long fit t
 
 ## Notebooks
 
-[marimo](https://marimo.io) notebooks, run in order. Each adds one thing to the one before it. Model notebooks follow the same workflow: data, model with a prior predictive check, fit and convergence, posterior predictive checks, model comparison (PSIS-LOO), prior sensitivity, results. The validation notebook instead scores actual held-out predictions from refits.
+[marimo](https://marimo.io) notebooks, run in order. Each adds one thing to the one before it. Model notebooks follow the same workflow: data, model with a prior predictive check, fit and convergence, posterior predictive checks, model comparison (PSIS-LOO), prior sensitivity, results. The validation notebook instead scores actual held-out predictions from refits; 2.5 is a separate synthetic prototype, not a new real-data validation.
 
 | Notebook | What it does |
 |---|---|
@@ -109,6 +109,7 @@ con = data_source.connect(local=True)          # offline, or to pin a long fit t
 | `2.2_dnf_observed.py` | Adds DNFs to 1.2: runner and course DNF tendencies, correlated with pace |
 | `2.3_dnf_unobserved.py` | Adds races that post no DNFs, via 2.1's reporting model, and predicts their hidden DNFs |
 | `2.4_dnf_validation.py` | Masks individual reporting races and refits to test hidden-DNF counts against a simple count baseline |
+| `2.5_dnf_field.py` | Synthetic joint-population prototype: named participation, anonymous entrants and correlated pace/DNF race effects |
 
 Names are `<track>.<step>_<topic>`: track 0 prepares data, 1 models finish times, 2 models
 DNFs; a step builds on the earlier steps of its track, and a new model takes the next step
@@ -237,6 +238,30 @@ Known modeling problems and planned work, grouped by notebook.
   the 42–60 km excess worsens. Fresh-race integration still raises own-course expected counts
   about 28%. These are diagnostic means, not new scores or evidence that course-specific
   donors represent missing entrants. No model was refitted or validation result replaced.
+
+### 2.5 dnf_field
+
+- **Synthetic prototype implemented, not numerically ready.** It explicitly models named
+  participation, a Gamma–Poisson anonymous field, selection-weighted finisher observations,
+  and correlated pace/DNF edition effects. Missing named/anonymous counts are marginalized
+  during fitting. Unlike the old conditional `NB(F, 1-p)` construction, field size has a proper
+  distribution and a masked edition's visible observations update its conditional effects.
+- **Stopped at the planned integration gate.** Independent mathematical tests pass, including
+  enumeration, Gamma integration, gradients and zero-finisher cases. Initial/perturbed-point
+  15/25-node checks pass. The 2-chain, 50-draw smoke completed in 49 seconds, but 3 of 40 audited
+  posterior draws exceeded the 0.001 per-edition log-likelihood tolerance; the worst difference
+  was 0.0748. At that point the 25/35 difference still reached 0.0151, with quadratic runner
+  coefficient 1.369. No higher-order refit or tolerance change was made. All six planned
+  recovery/sensitivity fits remain unrun; the smoke trace is retained.
+- **Illustrative priors only.** Prior simulation puts the third-percentile finisher pace near
+  2.2 min/km, implausibly fast for ultras. The user explicitly authorized retaining these
+  priors for synthetic computation/recovery checks, not deployment. Physical prior calibration
+  is required before real-data use.
+- **Production gates remain open:** the named registry and candidate graph are externally
+  supplied in simulations; anonymous identities are one-off; pace is unfiltered. Real runner
+  eligibility, anonymous repeat participation, outcome-dependent cleaning, reporting uncertainty
+  and new evaluation data require separate designs. A passing synthetic test would not prove
+  identification or transportability. The completed 2.4 validation is unchanged.
 
 ### Empirical priors (`utils/empirical_priors.py`)
 
